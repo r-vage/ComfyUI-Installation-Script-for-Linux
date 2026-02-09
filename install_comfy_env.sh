@@ -78,6 +78,11 @@ if $CREATE_SYMLINKS; then
 else
     echo "  Symlinks: Disabled"
 fi
+if $INSTALL_NUNCHAKU; then
+    echo "  Nunchaku: Enabled"
+else
+    echo "  Nunchaku: Disabled (custom node will be skipped)"
+fi
 echo "=========================================="
 echo ""
 echo "Select installation steps (enter numbers separated by spaces, or 'a' for all):"
@@ -568,7 +573,9 @@ clone_if_missing "https://github.com/MinorBoy/ComfyUI_essentials_mb.git"
 echo ""
 echo "Cloning model support & optimization..."
 clone_if_missing "https://github.com/city96/ComfyUI-GGUF.git"
-clone_if_missing "https://github.com/nunchaku-tech/ComfyUI-nunchaku.git"
+if $INSTALL_NUNCHAKU; then
+    clone_if_missing "https://github.com/r-vage/ComfyUI-nunchaku.git"
+fi
 clone_if_missing "https://github.com/r-vage/ComfyUI-TeaCache.git"
 clone_if_missing "https://github.com/r-vage/ComfyUI_Patches_ll.git"
 
