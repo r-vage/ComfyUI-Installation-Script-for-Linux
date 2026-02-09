@@ -590,10 +590,6 @@ clone_if_missing "https://github.com/TTPlanetPig/Comfyui_TTP_Toolset.git"
 clone_if_missing "https://github.com/rainlizard/ComfyUI-Raffle.git"
 clone_if_missing "https://github.com/mcmonkeyprojects/sd-dynamic-thresholding.git"
 clone_if_missing "https://github.com/ltdrdata/was-node-suite-comfyui.git"
-clone_if_missing "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git"
-clone_if_missing "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
-clone_if_missing "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
-
 
 # Specialized Models
 echo ""
@@ -608,6 +604,9 @@ clone_if_missing "https://github.com/Gourieff/ComfyUI-ReActor.git"
 echo ""
 echo "Cloning video processing..."
 clone_if_missing "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+clone_if_missing "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git"
+clone_if_missing "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
+clone_if_missing "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
 
 # Custom/Additional
 echo ""
