@@ -26,6 +26,7 @@ TRANSFORMERS_VERSION="4.57.3"      # Transformers version (5.x for Qwen3-VL/Mist
 # ComfyUI installation configuration
 COMFYUI_PARENT_DIR="/mnt/daten/AI"  # Parent directory where ComfyUI will be cloned
 COMFYUI_DIR_NAME="ComfyUI"          # ComfyUI folder name (change if you want a different name)
+COMFYUI_VERSION=""                  # ComfyUI version to checkout (tag, branch, or commit SHA). Leave empty for latest.
 
 # Symlink configuration for models and output
 CREATE_SYMLINKS=true                # Set to false to skip symlink creation
@@ -67,6 +68,11 @@ echo "  PyTorch Version: $PYTORCH_FULL_VERSION (torchvision/torchaudio auto-sele
 echo "  NumPy Version: $NUMPY_VERSION"
 echo "  Transformers Version: $TRANSFORMERS_VERSION"
 echo "  ComfyUI Location: $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME"
+if [ -n "$COMFYUI_VERSION" ]; then
+    echo "  ComfyUI Version: $COMFYUI_VERSION"
+else
+    echo "  ComfyUI Version: Latest (default branch)"
+fi
 echo "  Virtual Env: $VENV_PATH"
 echo "  Pyenv Root: $PYENV_ROOT"
 echo "  Shell: $DETECTED_SHELL"
@@ -453,8 +459,47 @@ if [ ! -d "$COMFYUI_DIR/.git" ]; then
     mkdir -p "$COMFYUI_PARENT_DIR"
     cd "$COMFYUI_PARENT_DIR"
     git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR_NAME"
+    
+    # Checkout specific version if specified
+    if [ -n "$COMFYUI_VERSION" ]; then
+        echo "Checking out ComfyUI version: $COMFYUI_VERSION"
+        cd "$COMFYUI_DIR"
+        git checkout "$COMFYUI_VERSION"
+    fi
 else
     echo "✓ ComfyUI already exists at $COMFYUI_DIR"
+    
+    # Checkout specific version if specified and not already on it
+    if [ -n "$COMFYUI_VERSION" ]; then
+        cd "$COMFYUI_DIR"
+        # Get current commit SHA
+        CURRENT_COMMIT=$(git rev-parse HEAD)
+        
+        # Try to resolve target version to commit SHA
+        TARGET_COMMIT=""
+        if git rev-parse --verify "$COMFYUI_VERSION" >/dev/null 2>&1; then
+            TARGET_COMMIT=$(git rev-parse --verify "$COMFYUI_VERSION")
+        else
+            # If we can't resolve locally, fetch and try again
+            echo "Fetching updates to resolve version: $COMFYUI_VERSION"
+            git fetch origin
+            if git rev-parse --verify "$COMFYUI_VERSION" >/dev/null 2>&1; then
+                TARGET_COMMIT=$(git rev-parse --verify "$COMFYUI_VERSION")
+            fi
+        fi
+        
+        if [ -z "$TARGET_COMMIT" ]; then
+            echo "Warning: Could not resolve version '$COMFYUI_VERSION'."
+            echo "Please verify this version exists in the repository (check tags/branches/commits)."
+            echo "Attempting checkout anyway..."
+            git checkout "$COMFYUI_VERSION"
+        elif [ "$CURRENT_COMMIT" != "$TARGET_COMMIT" ]; then
+            echo "Checking out ComfyUI version: $COMFYUI_VERSION"
+            git checkout "$COMFYUI_VERSION"
+        else
+            echo "✓ Already on version: $COMFYUI_VERSION"
+        fi
+    fi
 fi
 
 # Install ComfyUI base requirements
