@@ -574,9 +574,11 @@ if [ -L "$COMFYUI_DIR/custom_nodes" ]; then
 elif [ -d "$COMFYUI_DIR/custom_nodes" ]; then
     echo "⚠️  Moving existing custom_nodes to centralized location"
     # If the centralized location is empty or doesn't have content, copy from current installation
-    if [ ! "$(ls -A "$USER_CUSTOM_NODES_PATH" 2>/dev/null)" ]; then
+    if [ -z "$(ls -A "$USER_CUSTOM_NODES_PATH" 2>/dev/null)" ]; then
         echo "   Copying custom_nodes to $USER_CUSTOM_NODES_PATH"
-        cp -r "$COMFYUI_DIR/custom_nodes/." "$USER_CUSTOM_NODES_PATH/" 2>/dev/null || true
+        if ! cp -r "$COMFYUI_DIR/custom_nodes/." "$USER_CUSTOM_NODES_PATH/" 2>/dev/null; then
+            echo "⚠️  Warning: Failed to copy some custom_nodes content, continuing anyway..."
+        fi
     fi
     rm -rf "$COMFYUI_DIR/custom_nodes"
     ln -s "$USER_CUSTOM_NODES_PATH" "$COMFYUI_DIR/custom_nodes"
