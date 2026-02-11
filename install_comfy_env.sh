@@ -489,7 +489,9 @@ else
         fi
         
         if [ -z "$TARGET_COMMIT" ]; then
-            echo "Warning: Could not resolve version '$COMFYUI_VERSION'. Attempting checkout anyway..."
+            echo "Warning: Could not resolve version '$COMFYUI_VERSION'."
+            echo "Please verify this version exists in the repository (check tags/branches/commits)."
+            echo "Attempting checkout anyway..."
             git checkout "$COMFYUI_VERSION"
         elif [ "$CURRENT_COMMIT" != "$TARGET_COMMIT" ]; then
             echo "Checking out ComfyUI version: $COMFYUI_VERSION"
