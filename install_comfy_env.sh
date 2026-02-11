@@ -474,7 +474,9 @@ else
         cd "$COMFYUI_DIR"
         # Get current commit SHA
         CURRENT_COMMIT=$(git rev-parse HEAD)
-        # Try to get target commit SHA locally first
+        
+        # Try to resolve target version to commit SHA
+        TARGET_COMMIT=""
         if git rev-parse --verify "$COMFYUI_VERSION" >/dev/null 2>&1; then
             TARGET_COMMIT=$(git rev-parse --verify "$COMFYUI_VERSION")
         else
@@ -483,8 +485,6 @@ else
             git fetch origin
             if git rev-parse --verify "$COMFYUI_VERSION" >/dev/null 2>&1; then
                 TARGET_COMMIT=$(git rev-parse --verify "$COMFYUI_VERSION")
-            else
-                TARGET_COMMIT=""
             fi
         fi
         
