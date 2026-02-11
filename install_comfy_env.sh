@@ -22,16 +22,18 @@ PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"  # PyTorch index URL 
 # Critical package versions (enforced at end to override custom node dependencies)
 NUMPY_VERSION="2.2.6"             # NumPy version (2.2.x compatible with PyTorch 2.9+)
 TRANSFORMERS_VERSION="4.57.3"      # Transformers version (5.x for Qwen3-VL/Mistral3 support)
+COMFYUI_FRONTEND_VERSION="1.39.11" # ComfyUI frontend version (installed in venv's site-packages)
 
 # ComfyUI installation configuration
 COMFYUI_PARENT_DIR="/mnt/daten/AI"  # Parent directory where ComfyUI will be cloned
 COMFYUI_DIR_NAME="ComfyUI"          # ComfyUI folder name (change if you want a different name)
 COMFYUI_VERSION=""                  # ComfyUI version to checkout (tag, branch, or commit SHA). Leave empty for latest.
 
-# Symlink configuration for models and output
+# Symlink configuration for models, output, and custom_nodes
 CREATE_SYMLINKS=true                # Set to false to skip symlink creation
 USER_MODELS_PATH="/mnt/daten/AI/models"  # Your centralized models directory
 USER_OUTPUT_PATH="/mnt/daten/AI/output"  # Your centralized output directory
+USER_CUSTOM_NODES_PATH="/mnt/daten/AI/custom_nodes"  # Your centralized custom_nodes directory (shared across ComfyUI installations)
 
 # Optional features (set to false to disable)
 INSTALL_NUNCHAKU=true               # Set to false to skip Nunchaku (NVIDIA GPU required)
@@ -67,6 +69,7 @@ echo "  Python Version: $PYTHON_VERSION"
 echo "  PyTorch Version: $PYTORCH_FULL_VERSION (torchvision/torchaudio auto-selected)"
 echo "  NumPy Version: $NUMPY_VERSION"
 echo "  Transformers Version: $TRANSFORMERS_VERSION"
+echo "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
 echo "  ComfyUI Location: $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME"
 if [ -n "$COMFYUI_VERSION" ]; then
     echo "  ComfyUI Version: $COMFYUI_VERSION"
@@ -81,6 +84,7 @@ if $CREATE_SYMLINKS; then
     echo "  Symlinks: Enabled"
     echo "    Models: $USER_MODELS_PATH"
     echo "    Output: $USER_OUTPUT_PATH"
+    echo "    Custom Nodes: $USER_CUSTOM_NODES_PATH"
 else
     echo "  Symlinks: Disabled"
 fi
@@ -526,7 +530,7 @@ if $CREATE_SYMLINKS; then
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════════"
-echo "  Creating Symlinks for Models and Output"
+echo "  Creating Symlinks for Models, Output, and Custom Nodes"
 echo "═══════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -536,6 +540,7 @@ COMFYUI_DIR="${COMFYUI_DIR:-${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}}"
 # Create user directories if they don't exist
 mkdir -p "$USER_MODELS_PATH"
 mkdir -p "$USER_OUTPUT_PATH"
+mkdir -p "$USER_CUSTOM_NODES_PATH"
 
 # Handle models directory
 if [ -L "$COMFYUI_DIR/models" ]; then
@@ -561,6 +566,24 @@ elif [ -d "$COMFYUI_DIR/output" ]; then
 else
     ln -s "$USER_OUTPUT_PATH" "$COMFYUI_DIR/output"
     echo "✓ Created symlink: $COMFYUI_DIR/output -> $USER_OUTPUT_PATH"
+fi
+
+# Handle custom_nodes directory
+if [ -L "$COMFYUI_DIR/custom_nodes" ]; then
+    echo "✓ custom_nodes is already a symlink"
+elif [ -d "$COMFYUI_DIR/custom_nodes" ]; then
+    echo "⚠️  Moving existing custom_nodes to centralized location"
+    # If the centralized location is empty or doesn't have content, copy from current installation
+    if [ ! "$(ls -A $USER_CUSTOM_NODES_PATH 2>/dev/null)" ]; then
+        echo "   Copying custom_nodes to $USER_CUSTOM_NODES_PATH"
+        cp -r "$COMFYUI_DIR/custom_nodes"/* "$USER_CUSTOM_NODES_PATH/" 2>/dev/null || true
+    fi
+    rm -rf "$COMFYUI_DIR/custom_nodes"
+    ln -s "$USER_CUSTOM_NODES_PATH" "$COMFYUI_DIR/custom_nodes"
+    echo "✓ Created symlink: $COMFYUI_DIR/custom_nodes -> $USER_CUSTOM_NODES_PATH"
+else
+    ln -s "$USER_CUSTOM_NODES_PATH" "$COMFYUI_DIR/custom_nodes"
+    echo "✓ Created symlink: $COMFYUI_DIR/custom_nodes -> $USER_CUSTOM_NODES_PATH"
 fi
 
 fi  # End CREATE_SYMLINKS
@@ -800,7 +823,7 @@ echo "  [10/10] Enforcing Configured Package Versions"
 echo "═══════════════════════════════════════════════════════════════════"
 echo ""
 echo "Note: Custom nodes may have installed incompatible versions."
-echo "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}"
+echo "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}, Frontend ${COMFYUI_FRONTEND_VERSION}"
 echo ""
 
 # Ensure PyTorch with exact configured version (will upgrade/downgrade if needed)
@@ -815,6 +838,11 @@ pip install numpy==${NUMPY_VERSION} || {
 }
 pip install transformers==${TRANSFORMERS_VERSION} || {
     echo "⚠️  Transformers installation failed, continuing anyway..."
+}
+
+# Ensure ComfyUI Frontend with exact configured version
+pip install comfyui-frontend-package==${COMFYUI_FRONTEND_VERSION} || {
+    echo "⚠️  ComfyUI frontend installation failed, continuing anyway..."
 }
 
 echo "✓ Package versions enforced successfully"

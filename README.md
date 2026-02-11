@@ -77,6 +77,7 @@ PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
 ```bash
 NUMPY_VERSION="2.2.6"             # NumPy version (2.2.x for PyTorch 2.9+)
 TRANSFORMERS_VERSION="4.57.3"      # Transformers (4.57+ for Qwen3-VL/Mistral3)
+COMFYUI_FRONTEND_VERSION="1.39.11" # ComfyUI frontend (installed in venv's site-packages)
 ```
 
 These versions are enforced at the end of installation to override any conflicting dependencies from custom nodes.
@@ -111,14 +112,16 @@ COMFYUI_VERSION="abc123"        # Specific commit
 CREATE_SYMLINKS=true                # Enable/disable symlink creation
 USER_MODELS_PATH="/mnt/daten/AI/models"  # Centralized models directory
 USER_OUTPUT_PATH="/mnt/daten/AI/output"  # Centralized output directory
+USER_CUSTOM_NODES_PATH="/mnt/daten/AI/custom_nodes"  # Centralized custom_nodes directory
 ```
 
 **Symlinks allow you to**:
 - Share models across multiple ComfyUI installations
+- Share custom nodes across multiple ComfyUI installations (useful when testing different ComfyUI versions)
 - Store models on a different drive/partition
 - Keep outputs in a centralized location
 
-Set `CREATE_SYMLINKS=false` to use default `ComfyUI/models` and `ComfyUI/output` directories.
+Set `CREATE_SYMLINKS=false` to use default `ComfyUI/models`, `ComfyUI/output`, and `ComfyUI/custom_nodes` directories.
 
 ### Optional Features
 
@@ -143,7 +146,7 @@ The script is divided into 11 steps that you can run selectively:
 7. **Custom Node Dependencies** - Install requirements for all custom nodes
 8. **Performance Libraries** - llama-cpp-python, flash-attn, sageattention
 9. **Upgrade/Pin Packages** - Upgrade specific packages to latest compatible versions
-10. **Enforce Versions** - Force exact versions of PyTorch, NumPy, Transformers
+10. **Enforce Versions** - Force exact versions of PyTorch, NumPy, Transformers, ComfyUI Frontend
 11. **Shell Aliases** - Add `comfyui` and `envact` aliases to shell config
 
 ### Custom Nodes Included
