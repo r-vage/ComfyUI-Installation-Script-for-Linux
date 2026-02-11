@@ -5,7 +5,7 @@ An automated installation script for ComfyUI on Linux systems that handles every
 ## 🌟 Features
 
 - **Automated Environment Setup**: Installs pyenv, Python, and creates an isolated virtual environment
-- **Version Control**: Pin specific versions of PyTorch, NumPy, Transformers, and other critical packages
+- **Version Control**: Pin specific versions of ComfyUI, PyTorch, NumPy, Transformers, and other critical packages
 - **GPU Acceleration**: Supports CUDA 12.8, CUDA 12.1, and CPU-only installations
 - **Performance Optimization**: Includes optional Nunchaku, Flash Attention, and Sage Attention
 - **Custom Node Collection**: Automatically clones and configures 30+ popular custom nodes
@@ -86,9 +86,24 @@ These versions are enforced at the end of installation to override any conflicti
 ```bash
 COMFYUI_PARENT_DIR="/mnt/daten/AI"  # Parent directory for ComfyUI
 COMFYUI_DIR_NAME="ComfyUI"          # Folder name
+COMFYUI_VERSION=""                  # ComfyUI version (tag, branch, or commit SHA)
 ```
 
 ComfyUI will be cloned to: `${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}`
+
+**Version Selection**:
+- Leave `COMFYUI_VERSION=""` (empty) to clone the latest version from the default branch
+- Set to a specific tag: `COMFYUI_VERSION="v0.2.0"` (use tags from the [ComfyUI releases](https://github.com/comfyanonymous/ComfyUI/tags))
+- Set to a branch name: `COMFYUI_VERSION="master"` or `COMFYUI_VERSION="dev"`
+- Set to a commit SHA: `COMFYUI_VERSION="abc123def456"`
+
+Examples:
+```bash
+COMFYUI_VERSION=""              # Latest version (default)
+COMFYUI_VERSION="v0.2.0"        # Specific release tag
+COMFYUI_VERSION="master"        # Master branch
+COMFYUI_VERSION="abc123"        # Specific commit
+```
 
 ### Symlink Configuration
 
