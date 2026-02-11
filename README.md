@@ -106,6 +106,24 @@ COMFYUI_VERSION="master"        # Master branch
 COMFYUI_VERSION="abc123"        # Specific commit
 ```
 
+**Multiple ComfyUI Installations**:
+To install multiple versions of ComfyUI side-by-side, simply change `COMFYUI_DIR_NAME` when running the script again:
+```bash
+# First installation
+COMFYUI_DIR_NAME="ComfyUI"        # Creates /mnt/daten/AI/ComfyUI
+
+# Second installation (different version)
+COMFYUI_DIR_NAME="ComfyUI_v0.2.0" # Creates /mnt/daten/AI/ComfyUI_v0.2.0
+COMFYUI_VERSION="v0.2.0"
+```
+
+When `CREATE_SYMLINKS=true`, all installations will share:
+- Models (via `USER_MODELS_PATH`)
+- Output (via `USER_OUTPUT_PATH`)
+- Custom nodes (via `USER_CUSTOM_NODES_PATH`)
+
+This allows you to test different ComfyUI versions without duplicating your models and custom nodes.
+
 ### Symlink Configuration
 
 ```bash
