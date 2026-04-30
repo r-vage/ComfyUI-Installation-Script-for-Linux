@@ -1,0 +1,29 @@
+[project]
+name = "comfyui-installation-script"
+version = "0.11.0"
+description = "Cross-platform installation scripts (Linux bash + Windows PowerShell) for setting up isolated ComfyUI environments with shared models, input, output, user data, and custom_nodes folders across multiple ComfyUI versions."
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "r-vage" },
+]
+keywords = ["comfyui", "installer", "setup", "pyenv", "venv", "pytorch"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: System :: Installation/Setup",
+]
+
+[project.urls]
+Repository = "https://github.com/r-vage/ComfyUI-Installation-Script-for-Linux"
+Issues = "https://github.com/r-vage/ComfyUI-Installation-Script-for-Linux/issues"
+
+[tool.comfy]
+PublisherId = "r-vage"
+DisplayName = "ComfyUI Installation Script"
+Icon = ""
