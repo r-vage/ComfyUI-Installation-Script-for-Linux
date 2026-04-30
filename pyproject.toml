@@ -22,8 +22,3 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/r-vage/ComfyUI-Installation-Script-for-Linux"
 Issues = "https://github.com/r-vage/ComfyUI-Installation-Script-for-Linux/issues"
-
-[tool.comfy]
-PublisherId = "r-vage"
-DisplayName = "ComfyUI Installation Script"
-Icon = ""
