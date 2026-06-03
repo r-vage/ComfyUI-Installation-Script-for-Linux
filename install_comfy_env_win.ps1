@@ -765,7 +765,6 @@ if ($Steps[6]) {
 
     # Core Extensions
     Write-Host "Cloning core extensions..." -ForegroundColor White
-    Copy-IfMissing "https://github.com/r-vage/ComfyUI_SmartLML.git"
     Copy-IfMissing "https://github.com/r-vage/ComfyUI_Eclipse.git"
     Copy-IfMissing "https://github.com/Comfy-Org/ComfyUI-Manager.git"
 
@@ -773,32 +772,32 @@ if ($Steps[6]) {
     Write-Host ""
     Write-Host "Cloning UI & workflow tools..." -ForegroundColor White
     Copy-IfMissing "https://github.com/BobRandomNumber/ComfyUI-Crystools-MonitorOnly.git"
-    Copy-IfMissing "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"
-    Copy-IfMissing "https://github.com/r-vage/rgthree-comfy.git"
+    Copy-IfMissing "https://github.com/pythongosssss/ComfyUI-Custom-Scripts"
+    Copy-IfMissing "https://github.com/rgthree/rgthree-comfy"
     Copy-IfMissing "https://github.com/yolain/ComfyUI-Easy-Use.git"
     Copy-IfMissing "https://github.com/cubiq/ComfyUI_essentials.git"
     Copy-IfMissing "https://github.com/MinorBoy/ComfyUI_essentials_mb.git"
     Copy-IfMissing "https://github.com/chrisgoringe/cg-image-filter.git"
+    Copy-IfMissing "https://github.com/ashtar1984/comfyui-find-perfect-resolution"
+    Copy-IfMissing "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes"
+    Copy-IfMissing "https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI"
 
     # Model Support & Optimization
     Write-Host ""
     Write-Host "Cloning model support & optimization..." -ForegroundColor White
     Copy-IfMissing "https://github.com/city96/ComfyUI-GGUF.git"
-    if ($INSTALL_NUNCHAKU) {
-        Copy-IfMissing "https://github.com/nunchaku-ai/ComfyUI-nunchaku.git"
-    }
     Copy-IfMissing "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
     Copy-IfMissing "https://github.com/lldacing/ComfyUI_Patches_ll.git"
-    Copy-IfMissing "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"
 
     # Sampling & Scheduling
     Write-Host ""
     Write-Host "Cloning sampling & scheduling..." -ForegroundColor White
     Copy-IfMissing "https://github.com/r-vage/RES4LYF.git"
     Copy-IfMissing "https://github.com/mcmonkeyprojects/sd-dynamic-thresholding.git"
-    Copy-IfMissing "https://github.com/rainlizard/ComfyUI-Raffle.git"
-    Copy-IfMissing "https://github.com/ChangeTheConstants/SeedVarianceEnhancer.git"
-    Copy-IfMissing "https://github.com/wildminder/ComfyUI-DyPE.git"
+    Copy-IfMissing "https://github.com/r-vage/ComfyUI-Raffle"
+    Copy-IfMissing "https://github.com/ChangeTheConstants/SeedVarianceEnhancer"
+    Copy-IfMissing "https://github.com/wildminder/ComfyUI-DyPE"
+    Copy-IfMissing "https://github.com/Artificial-Sweetener/comfyui-WhiteRabbit"
 
     # ControlNet & Advanced Control
     Write-Host ""
@@ -815,11 +814,7 @@ if ($Steps[6]) {
     Copy-IfMissing "https://github.com/chflame163/ComfyUI_LayerStyle_Advance.git"
     Copy-IfMissing "https://github.com/Jonseed/ComfyUI-Detail-Daemon.git"
     Copy-IfMissing "https://github.com/kijai/ComfyUI-KJNodes.git"
-    Copy-IfMissing "https://github.com/TTPlanetPig/Comfyui_TTP_Toolset.git"
     Copy-IfMissing "https://github.com/ssitu/ComfyUI_UltimateSDUpscale.git"
-    Copy-IfMissing "https://github.com/spacepxl/ComfyUI-VAE-Utils.git"
-    Copy-IfMissing "https://github.com/ltdrdata/was-node-suite-comfyui.git"
-    Copy-IfMissing "https://github.com/melMass/comfy_mtb.git"
 
     # Specialized Models
     Write-Host ""
@@ -828,17 +823,27 @@ if ($Steps[6]) {
     Copy-IfMissing "https://github.com/kijai/ComfyUI-SUPIR.git"
     Copy-IfMissing "https://github.com/lldacing/ComfyUI_BiRefNet_ll.git"
     Copy-IfMissing "https://github.com/lldacing/ComfyUI_PuLID_Flux_ll.git"
-    Copy-IfMissing "https://github.com/Gourieff/ComfyUI-ReActor.git"
+    Copy-IfMissing "https://github.com/kijai/ComfyUI-SCAIL-Pose.git"
+    
+    # Audio & Media
+    Write-Host ""
+    Write-Host "Cloning audio & media..." -ForegroundColor White
+    Copy-IfMissing "https://github.com/kijai/ComfyUI-MMAudio"
+    Copy-IfMissing "https://github.com/kijai/ComfyUI-MelBandRoFormer"
+    Copy-IfMissing "https://github.com/mattjohnpowell/comfyui-audio-expo"
 
     # Video Processing
     Write-Host ""
     Write-Host "Cloning video processing..." -ForegroundColor White
     Copy-IfMissing "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
     Copy-IfMissing "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git"
-    Copy-IfMissing "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
-    Copy-IfMissing "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+    Copy-IfMissing "https://github.com/kijai/ComfyUI-GIMM-VFI"
+    Copy-IfMissing "https://github.com/GACLove/ComfyUI-VFI"
+    Copy-IfMissing "https://github.com/kijai/ComfyUI-WanVideoWrapper"
+    Copy-IfMissing "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"
     Copy-IfMissing "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
     Copy-IfMissing "https://github.com/stduhpf/ComfyUI-WanMoeKSampler.git"
+    Copy-IfMissing "https://github.com/Lightricks/ComfyUI-LTXVideo"
 
     Pop-Location
 }

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-06-03
+
+### Added
+- New **Audio & Media** clone category: `ComfyUI-MMAudio`, `ComfyUI-MelBandRoFormer`, `comfyui-audio-expo`
+- New nodes: `ComfyUI-DaSiWa-Nodes`, `comfyui-find-perfect-resolution`, `Nvidia_RTX_Nodes_ComfyUI`, `comfyui-WhiteRabbit`, `ComfyUI-SCAIL-Pose`, `ComfyUI-YOLO`, `ComfyUI-VFI`, `ComfyUI-WanAnimatePreprocess`, `ComfyUI-LTXVideo`
+
+### Removed
+- Deprecated `ComfyUI_SmartLML` (superseded by Eclipse)
+- `ComfyUI-nunchaku` conditional clone block
+- `ComfyUI_IPAdapter_plus`, `Comfyui_TTP_Toolset`, `ComfyUI-VAE-Utils`, `was-node-suite-comfyui`, `comfy_mtb`, `ComfyUI-ReActor`
+
+### Changed
+- Updated fork URLs to upstream where applicable: `rgthree-comfy`, `ComfyUI-TeaCache`, `ComfyUI_Patches_ll`, `ComfyUI-Raffle`, `ComfyUI-Crystools-MonitorOnly`
+
+**Changed files:** `install_comfy_env.sh`, `install_comfy_env_win.ps1`
+
+---
+
 ## [0.11.2] - 2026-06-03
 
 ### Fixed

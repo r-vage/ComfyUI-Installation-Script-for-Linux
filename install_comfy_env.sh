@@ -857,7 +857,6 @@ clone_if_missing() {
 
 # Core Extensions
 echo "Cloning core extensions..."
-clone_if_missing "https://github.com/r-vage/ComfyUI_SmartLML.git"
 clone_if_missing "https://github.com/r-vage/ComfyUI_Eclipse.git"
 clone_if_missing "https://github.com/Comfy-Org/ComfyUI-Manager.git"
 
@@ -865,32 +864,32 @@ clone_if_missing "https://github.com/Comfy-Org/ComfyUI-Manager.git"
 echo ""
 echo "Cloning UI & workflow tools..."
 clone_if_missing "https://github.com/BobRandomNumber/ComfyUI-Crystools-MonitorOnly.git"
-clone_if_missing "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"
-clone_if_missing "https://github.com/r-vage/rgthree-comfy.git"
+clone_if_missing "https://github.com/pythongosssss/ComfyUI-Custom-Scripts"
+clone_if_missing "https://github.com/rgthree/rgthree-comfy"
 clone_if_missing "https://github.com/yolain/ComfyUI-Easy-Use.git"
 clone_if_missing "https://github.com/cubiq/ComfyUI_essentials.git"
 clone_if_missing "https://github.com/MinorBoy/ComfyUI_essentials_mb.git"
 clone_if_missing "https://github.com/chrisgoringe/cg-image-filter.git"
+clone_if_missing "https://github.com/ashtar1984/comfyui-find-perfect-resolution"
+clone_if_missing "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes"
+clone_if_missing "https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI"
 
 # Model Support & Optimization
 echo ""
 echo "Cloning model support & optimization..."
 clone_if_missing "https://github.com/city96/ComfyUI-GGUF.git"
-if $INSTALL_NUNCHAKU; then
-    clone_if_missing "https://github.com/nunchaku-ai/ComfyUI-nunchaku.git"
-fi
 clone_if_missing "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
 clone_if_missing "https://github.com/lldacing/ComfyUI_Patches_ll.git"
-clone_if_missing "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"
 
 # Sampling & Scheduling
 echo ""
 echo "Cloning sampling & scheduling..."
 clone_if_missing "https://github.com/r-vage/RES4LYF.git"
 clone_if_missing "https://github.com/mcmonkeyprojects/sd-dynamic-thresholding.git"
-clone_if_missing "https://github.com/rainlizard/ComfyUI-Raffle.git"
-clone_if_missing "https://github.com/ChangeTheConstants/SeedVarianceEnhancer.git"
-clone_if_missing "https://github.com/wildminder/ComfyUI-DyPE.git"
+clone_if_missing "https://github.com/r-vage/ComfyUI-Raffle"
+clone_if_missing "https://github.com/ChangeTheConstants/SeedVarianceEnhancer"
+clone_if_missing "https://github.com/wildminder/ComfyUI-DyPE"
+clone_if_missing "https://github.com/Artificial-Sweetener/comfyui-WhiteRabbit"
 
 # ControlNet & Advanced Control
 echo ""
@@ -907,11 +906,7 @@ clone_if_missing "https://github.com/chflame163/ComfyUI_LayerStyle.git"
 clone_if_missing "https://github.com/chflame163/ComfyUI_LayerStyle_Advance.git"
 clone_if_missing "https://github.com/Jonseed/ComfyUI-Detail-Daemon.git"
 clone_if_missing "https://github.com/kijai/ComfyUI-KJNodes.git"
-clone_if_missing "https://github.com/TTPlanetPig/Comfyui_TTP_Toolset.git"
 clone_if_missing "https://github.com/ssitu/ComfyUI_UltimateSDUpscale.git"
-clone_if_missing "https://github.com/spacepxl/ComfyUI-VAE-Utils.git"
-clone_if_missing "https://github.com/ltdrdata/was-node-suite-comfyui.git"
-clone_if_missing "https://github.com/melMass/comfy_mtb.git"
 
 # Specialized Models
 echo ""
@@ -920,17 +915,27 @@ clone_if_missing "https://github.com/kijai/ComfyUI-Florence2.git"
 clone_if_missing "https://github.com/kijai/ComfyUI-SUPIR.git"
 clone_if_missing "https://github.com/lldacing/ComfyUI_BiRefNet_ll.git"
 clone_if_missing "https://github.com/lldacing/ComfyUI_PuLID_Flux_ll.git"
-clone_if_missing "https://github.com/Gourieff/ComfyUI-ReActor.git"
+clone_if_missing "https://github.com/kijai/ComfyUI-SCAIL-Pose.git"
+
+# Audio & Media
+echo ""
+echo "Cloning audio & media..."
+clone_if_missing "https://github.com/kijai/ComfyUI-MMAudio"
+clone_if_missing "https://github.com/kijai/ComfyUI-MelBandRoFormer"
+clone_if_missing "https://github.com/mattjohnpowell/comfyui-audio-expo"
 
 # Video Processing
 echo ""
 echo "Cloning video processing..."
 clone_if_missing "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
 clone_if_missing "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git"
-clone_if_missing "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
-clone_if_missing "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+clone_if_missing "https://github.com/kijai/ComfyUI-GIMM-VFI"
+clone_if_missing "https://github.com/GACLove/ComfyUI-VFI"
+clone_if_missing "https://github.com/kijai/ComfyUI-WanVideoWrapper"
+clone_if_missing "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"
 clone_if_missing "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
 clone_if_missing "https://github.com/stduhpf/ComfyUI-WanMoeKSampler.git"
+clone_if_missing "https://github.com/Lightricks/ComfyUI-LTXVideo"
 
 
 fi  # End STEP_6
