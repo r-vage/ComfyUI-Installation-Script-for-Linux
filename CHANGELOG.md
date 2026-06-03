@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-06-03
+
+### Fixed
+- Step selection now accepts comma-separated input (e.g. `5,11` or `1,5,6-8`) in addition to space-separated and ranges (Linux + Windows)
+
+### Changed
+- Default ComfyUI version: `0.19.3` → `0.23.0` (Linux + Windows)
+- Default frontend version: `1.42.11` → `1.44.19` (Linux + Windows)
+
+**Changed files:** `install_comfy_env.sh`, `install_comfy_env_win.ps1`
+
+---
+
 ## [0.11.0] - 2026-04-30
 
 ### Added

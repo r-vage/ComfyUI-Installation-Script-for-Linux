@@ -29,11 +29,11 @@ PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"  # PyTorch index URL 
 # Critical package versions (enforced at end to override custom node dependencies)
 NUMPY_VERSION="2.2.6"               # NumPy version (2.2.x compatible with PyTorch 2.9+)
 TRANSFORMERS_VERSION="5.3.0"       # Transformers version (5.x for Qwen3-VL/Mistral3 support)
-COMFYUI_FRONTEND_VERSION="1.42.11"  # ComfyUI frontend version (installed in venv's site-packages)
+COMFYUI_FRONTEND_VERSION="1.44.19"  # ComfyUI frontend version (installed in venv's site-packages)
 
 # ComfyUI installation defaults (overridden by interactive prompts below)
-DEFAULT_COMFYUI_VERSION="0.19.3"     # Default ComfyUI version (numeric, e.g., 0.18.0)
-DEFAULT_FRONTEND_VERSION="1.42.11"   # Default frontend version (numeric, e.g., 1.41.21)
+DEFAULT_COMFYUI_VERSION="0.23.0"     # Default ComfyUI version (numeric, e.g., 0.18.0)
+DEFAULT_FRONTEND_VERSION="1.44.19"   # Default frontend version (numeric, e.g., 1.41.21)
 DEFAULT_ALIAS="comfyui"              # Default shell alias (e.g., comfyui, comfy2, comfy3)
 
 # Symlink configuration for models, input, output, user, and custom_nodes
@@ -178,7 +178,7 @@ else
 fi
 echo "=========================================="
 echo ""
-echo "Select installation steps (numbers, ranges, or 'a' for all — e.g., 6-10 or 1 5 6-8):"
+echo "Select installation steps (numbers, ranges, or 'a' for all — e.g., 6-10 or 1 5 6-8 or 5,11):"
 echo ""
 echo "  1) Python environment (pyenv + venv)"
 echo "  2) PyTorch and base dependencies"
@@ -209,6 +209,9 @@ STEP_8=false
 STEP_9=false
 STEP_10=false
 STEP_11=false
+
+# Normalize commas to spaces so "5,11" and "5 11" both work
+STEP_SELECTION=$(echo "$STEP_SELECTION" | tr ',' ' ')
 
 # Parse selection
 if [[ "$STEP_SELECTION" == "a" ]]; then
@@ -637,14 +640,14 @@ fi  # End STEP_5
 # ============================================================================
 if $CREATE_SYMLINKS; then
 
+# Ensure COMFYUI_DIR is set
+COMFYUI_DIR="${COMFYUI_DIR:-${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}}"
+
 echo ""
 echo "═══════════════════════════════════════════════════════════════════"
 echo "  Creating Symlinks for Models, Input, Output, User Data, and Custom Nodes"
 echo "═══════════════════════════════════════════════════════════════════"
 echo ""
-
-# Ensure COMFYUI_DIR is set
-COMFYUI_DIR="${COMFYUI_DIR:-${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}}"
 
 # Create user directories if they don't exist
 mkdir -p "$USER_MODELS_PATH"

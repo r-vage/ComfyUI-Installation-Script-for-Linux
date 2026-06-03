@@ -36,10 +36,10 @@ $PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/cu128"  # PyTorch index U
 # Critical package versions (enforced at end to override custom node dependencies)
 $NUMPY_VERSION = "2.2.6"                      # NumPy version (2.2.x compatible with PyTorch 2.9+)
 $TRANSFORMERS_VERSION = "4.57.3"              # Transformers version
-$COMFYUI_FRONTEND_VERSION = "1.42.11"         # Default ComfyUI frontend version (overridden by interactive prompt)
+$COMFYUI_FRONTEND_VERSION = "1.44.19"         # Default ComfyUI frontend version (overridden by interactive prompt)
 
 # ComfyUI installation defaults (overridden by interactive prompts below)
-$DEFAULT_COMFYUI_VERSION = "0.19.3"            # Default ComfyUI version (numeric, e.g., 0.18.0)
+$DEFAULT_COMFYUI_VERSION = "0.23.0"            # Default ComfyUI version (numeric, e.g., 0.18.0)
 $DEFAULT_FRONTEND_VERSION = $COMFYUI_FRONTEND_VERSION  # Default frontend version
 $DEFAULT_ALIAS = "comfyui"                     # Default launcher alias/batch name (e.g., comfyui, comfy2, comfy3)
 
@@ -280,7 +280,7 @@ Write-Host ""
 # ============================================
 # Step Selection
 # ============================================
-Write-Host "Select installation steps (numbers, ranges, or 'a' for all - e.g., 6-10 or 1 5 6-8):"
+Write-Host "Select installation steps (numbers, ranges, or 'a' for all - e.g., 6-10 or 1 5 6-8 or 5,11):"
 Write-Host ""
 Write-Host "   1) Python environment (pyenv-win + venv)"
 Write-Host "   2) PyTorch and base dependencies"
@@ -298,6 +298,8 @@ Write-Host "   a) All steps (default)"
 Write-Host ""
 $STEP_SELECTION = Read-Host "Your selection [a]"
 if ([string]::IsNullOrWhiteSpace($STEP_SELECTION)) { $STEP_SELECTION = "a" }
+# Normalize commas to spaces so "5,11" and "5 11" both work
+$STEP_SELECTION = $STEP_SELECTION -replace ',', ' '
 
 # Initialize step flags
 $Steps = @{}
