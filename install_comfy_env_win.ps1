@@ -234,12 +234,74 @@ function New-DirectoryJunction {
     Write-Success "Created junction: $Link -> $Target"
 }
 
+function Test-DirectoryContainsOnlyPristineRepoContent {
+    param(
+        [string]$DirectoryPath,
+        [string]$RepoPath
+    )
+
+    & git -C $RepoPath rev-parse --is-inside-work-tree 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+
+    $repoPrefix = $RepoPath.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $entries = @(Get-ChildItem $DirectoryPath -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
+        -not $_.PSIsContainer -or ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    })
+
+    foreach ($entry in $entries) {
+        if (-not $entry.FullName.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
+
+        $repoRelativePath = $entry.FullName.Substring($repoPrefix.Length).Replace('\', '/')
+        & git -C $RepoPath ls-files --error-unmatch -- $repoRelativePath 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
+
+        & git -C $RepoPath diff --quiet HEAD -- $repoRelativePath
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Copy-MissingDirectoryContent {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationPath
+    )
+
+    foreach ($sourceItem in @(Get-ChildItem -LiteralPath $SourcePath -Force -ErrorAction Stop)) {
+        $destinationItemPath = Join-Path $DestinationPath $sourceItem.Name
+
+        if ($sourceItem.PSIsContainer -and -not ($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            if (-not (Test-Path -LiteralPath $destinationItemPath)) {
+                New-Item -ItemType Directory -Path $destinationItemPath -Force -ErrorAction Stop | Out-Null
+            }
+
+            $destinationItem = Get-Item -LiteralPath $destinationItemPath -Force -ErrorAction Stop
+            if ($destinationItem.PSIsContainer -and -not ($destinationItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                Copy-MissingDirectoryContent -SourcePath $sourceItem.FullName -DestinationPath $destinationItemPath
+            }
+        }
+        elseif (-not (Test-Path -LiteralPath $destinationItemPath)) {
+            Copy-Item -LiteralPath $sourceItem.FullName -Destination $destinationItemPath -Recurse -Force -ErrorAction Stop
+        }
+    }
+}
+
 function Set-ComfyDirectorySharing {
     param(
         [string]$Name,
         [string]$LocalPath,
         [string]$SharedPath,
-        [bool]$Enabled
+        [bool]$Enabled,
+        [bool]$NewInstall = $false
     )
 
     if (-not $Enabled) {
@@ -291,6 +353,17 @@ function Set-ComfyDirectorySharing {
         $sharedItems = @(Get-ChildItem $SharedPath -Force -ErrorAction SilentlyContinue)
         if ($localItems.Count -eq 0) {
             [System.IO.Directory]::Delete($LocalPath)
+        }
+        elseif ($NewInstall -or (Test-DirectoryContainsOnlyPristineRepoContent -DirectoryPath $LocalPath -RepoPath $COMFYUI_DIR)) {
+            Write-Step "$Name moving checkout files that are missing from $SharedPath"
+            try {
+                Copy-MissingDirectoryContent -SourcePath $LocalPath -DestinationPath $SharedPath
+                Remove-Item $LocalPath -Recurse -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Warn "$Name merge failed; preserving the local directory and skipping the junction"
+                return
+            }
         }
         elseif ($sharedItems.Count -eq 0) {
             Write-Step "$Name copying existing local data to $SharedPath"
@@ -392,6 +465,7 @@ $COMFYUI_VERSION = "v$INPUT_COMFYUI_VERSION"                               # e.g
 $COMFYUI_DIR_NAME = "ComfyUI_$INPUT_COMFYUI_VERSION"                          # e.g., ComfyUI_0.18.2 (full version)
 $COMFYUI_FRONTEND_VERSION = $INPUT_FRONTEND_VERSION                         # e.g., 1.41.21
 $COMFYUI_ALIAS = $INPUT_ALIAS                                              # e.g., comfyui or comfy2
+$COMFYUI_WAS_CLONED = $false                                               # Set after a new clone completes in this run
 
 # Exclude the official frontend package from every uv resolution when the user
 # manages a custom frontend. This also covers ComfyUI/custom-node requirements.
@@ -788,6 +862,10 @@ if ($Steps[5]) {
         }
         Push-Location $COMFYUI_PARENT_DIR
         git clone https://github.com/comfyanonymous/ComfyUI.git $COMFYUI_DIR_NAME
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $COMFYUI_DIR ".git"))) {
+            throw "Failed to clone ComfyUI into $COMFYUI_DIR"
+        }
+        $COMFYUI_WAS_CLONED = $true
 
         if ($COMFYUI_VERSION) {
             Write-Step "Checking out ComfyUI version: $COMFYUI_VERSION"
@@ -856,11 +934,11 @@ Write-Header "Configuring Shared and Local Directories"
 
 $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
 
-Set-ComfyDirectorySharing -Name "Models" -LocalPath (Join-Path $COMFYUI_DIR "models") -SharedPath $USER_MODELS_PATH -Enabled $SYMLINK_MODELS
-Set-ComfyDirectorySharing -Name "Input" -LocalPath (Join-Path $COMFYUI_DIR "input") -SharedPath $USER_INPUT_PATH -Enabled $SYMLINK_INPUT
-Set-ComfyDirectorySharing -Name "Output" -LocalPath (Join-Path $COMFYUI_DIR "output") -SharedPath $USER_OUTPUT_PATH -Enabled $SYMLINK_OUTPUT
-Set-ComfyDirectorySharing -Name "User Data" -LocalPath (Join-Path $COMFYUI_DIR "user") -SharedPath $USER_USERDATA_PATH -Enabled $SYMLINK_USER
-Set-ComfyDirectorySharing -Name "Custom Nodes" -LocalPath (Join-Path $COMFYUI_DIR "custom_nodes") -SharedPath $USER_CUSTOM_NODES_PATH -Enabled $SYMLINK_CUSTOM_NODES
+Set-ComfyDirectorySharing -Name "Models" -LocalPath (Join-Path $COMFYUI_DIR "models") -SharedPath $USER_MODELS_PATH -Enabled $SYMLINK_MODELS -NewInstall $COMFYUI_WAS_CLONED
+Set-ComfyDirectorySharing -Name "Input" -LocalPath (Join-Path $COMFYUI_DIR "input") -SharedPath $USER_INPUT_PATH -Enabled $SYMLINK_INPUT -NewInstall $COMFYUI_WAS_CLONED
+Set-ComfyDirectorySharing -Name "Output" -LocalPath (Join-Path $COMFYUI_DIR "output") -SharedPath $USER_OUTPUT_PATH -Enabled $SYMLINK_OUTPUT -NewInstall $COMFYUI_WAS_CLONED
+Set-ComfyDirectorySharing -Name "User Data" -LocalPath (Join-Path $COMFYUI_DIR "user") -SharedPath $USER_USERDATA_PATH -Enabled $SYMLINK_USER -NewInstall $COMFYUI_WAS_CLONED
+Set-ComfyDirectorySharing -Name "Custom Nodes" -LocalPath (Join-Path $COMFYUI_DIR "custom_nodes") -SharedPath $USER_CUSTOM_NODES_PATH -Enabled $SYMLINK_CUSTOM_NODES -NewInstall $COMFYUI_WAS_CLONED
 
 # ============================================================================
 # [6/11] Clone Custom Nodes

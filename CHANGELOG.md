@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-08-06
+
+### Fixed
+- New ComfyUI checkout files missing from shared directories are merged without overwriting existing files before enabled checkout folders are removed and replaced by symlinks or junctions
+- Previous incomplete sharing setups are repaired when their local folders still contain only pristine ComfyUI checkout files
+
+**Changed files:** `install_comfy_env.sh`, `install_comfy_env_win.ps1`, `README.md`, `CHANGELOG.md`, `pyproject.toml`
+
+---
+
 ## [0.12.0] - 2026-08-06
 
 ### Added

@@ -172,6 +172,7 @@ COMFYUI_VERSION="v${INPUT_COMFYUI_VERSION}"                               # e.g.
 COMFYUI_DIR_NAME="ComfyUI_${INPUT_COMFYUI_VERSION}"                         # e.g., ComfyUI_0.18.2 (full version)
 COMFYUI_FRONTEND_VERSION="${INPUT_FRONTEND_VERSION}"                       # e.g., 1.41.21
 COMFYUI_ALIAS="${INPUT_ALIAS}"                                            # e.g., comfyui or comfy2
+COMFYUI_WAS_CLONED=false                                                  # Set after a new clone completes in this run
 
 # Exclude the official frontend package from every uv resolution when the user
 # manages a custom frontend. This also covers ComfyUI/custom-node requirements.
@@ -668,6 +669,7 @@ if [ ! -d "$COMFYUI_DIR/.git" ]; then
     mkdir -p "$COMFYUI_PARENT_DIR"
     cd "$COMFYUI_PARENT_DIR"
     git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR_NAME"
+    COMFYUI_WAS_CLONED=true
     
     # Checkout specific version if specified
     if [ -n "$COMFYUI_VERSION" ]; then
@@ -741,11 +743,66 @@ echo "  Configuring Shared and Local Directories"
 echo "═══════════════════════════════════════════════════════════════════"
 echo ""
 
+directory_contains_only_pristine_repo_content() {
+    local directory="$1"
+    local repo_root="$2"
+    local entry
+    local repo_relative_path
+
+    git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+
+    while IFS= read -r -d '' entry; do
+        repo_relative_path="${entry#"$repo_root"/}"
+        if ! git -C "$repo_root" ls-files --error-unmatch -- "$repo_relative_path" >/dev/null 2>&1; then
+            return 1
+        fi
+        if ! git -C "$repo_root" diff --quiet HEAD -- "$repo_relative_path"; then
+            return 1
+        fi
+    done < <(find "$directory" \( -type f -o -type l \) -print0)
+
+    return 0
+}
+
+copy_missing_directory_content() {
+    local source_path="$1"
+    local destination_path="$2"
+    local source_entry
+    local destination_entry
+    local entry_name
+
+    while IFS= read -r -d '' source_entry; do
+        entry_name="${source_entry##*/}"
+        destination_entry="$destination_path/$entry_name"
+
+        if [ -d "$source_entry" ] && [ ! -L "$source_entry" ]; then
+            if [ ! -e "$destination_entry" ] && [ ! -L "$destination_entry" ]; then
+                if ! mkdir -p "$destination_entry"; then
+                    return 1
+                fi
+            fi
+
+            if [ -d "$destination_entry" ] && [ ! -L "$destination_entry" ]; then
+                if ! copy_missing_directory_content "$source_entry" "$destination_entry"; then
+                    return 1
+                fi
+            fi
+        elif [ ! -e "$destination_entry" ] && [ ! -L "$destination_entry" ]; then
+            if ! cp -a "$source_entry" "$destination_entry"; then
+                return 1
+            fi
+        fi
+    done < <(find "$source_path" -mindepth 1 -maxdepth 1 -print0)
+
+    return 0
+}
+
 configure_shared_directory() {
     local name="$1"
     local local_path="$2"
     local shared_path="$3"
     local enabled="$4"
+    local new_install="${5:-false}"
 
     if [ "$enabled" != true ]; then
         if [ -L "$local_path" ]; then
@@ -781,6 +838,14 @@ configure_shared_directory() {
     if [ -d "$local_path" ]; then
         if [ -z "$(ls -A "$local_path" 2>/dev/null)" ]; then
             rmdir "$local_path"
+        elif [ "$new_install" = true ] || directory_contains_only_pristine_repo_content "$local_path" "$COMFYUI_DIR"; then
+            echo "→ $name: moving checkout files that are missing from $shared_path"
+            if copy_missing_directory_content "$local_path" "$shared_path"; then
+                rm -rf "$local_path"
+            else
+                echo "⚠️  $name: merge failed; preserving the local directory and skipping the symlink"
+                return
+            fi
         elif [ -z "$(ls -A "$shared_path" 2>/dev/null)" ]; then
             echo "→ $name: copying existing local data to $shared_path"
             if cp -a "$local_path/." "$shared_path/"; then
@@ -819,11 +884,11 @@ print_directory_state() {
     fi
 }
 
-configure_shared_directory "Models" "$COMFYUI_DIR/models" "$USER_MODELS_PATH" "$SYMLINK_MODELS"
-configure_shared_directory "Input" "$COMFYUI_DIR/input" "$USER_INPUT_PATH" "$SYMLINK_INPUT"
-configure_shared_directory "Output" "$COMFYUI_DIR/output" "$USER_OUTPUT_PATH" "$SYMLINK_OUTPUT"
-configure_shared_directory "User Data" "$COMFYUI_DIR/user" "$USER_USERDATA_PATH" "$SYMLINK_USER"
-configure_shared_directory "Custom Nodes" "$COMFYUI_DIR/custom_nodes" "$USER_CUSTOM_NODES_PATH" "$SYMLINK_CUSTOM_NODES"
+configure_shared_directory "Models" "$COMFYUI_DIR/models" "$USER_MODELS_PATH" "$SYMLINK_MODELS" "$COMFYUI_WAS_CLONED"
+configure_shared_directory "Input" "$COMFYUI_DIR/input" "$USER_INPUT_PATH" "$SYMLINK_INPUT" "$COMFYUI_WAS_CLONED"
+configure_shared_directory "Output" "$COMFYUI_DIR/output" "$USER_OUTPUT_PATH" "$SYMLINK_OUTPUT" "$COMFYUI_WAS_CLONED"
+configure_shared_directory "User Data" "$COMFYUI_DIR/user" "$USER_USERDATA_PATH" "$SYMLINK_USER" "$COMFYUI_WAS_CLONED"
+configure_shared_directory "Custom Nodes" "$COMFYUI_DIR/custom_nodes" "$USER_CUSTOM_NODES_PATH" "$SYMLINK_CUSTOM_NODES" "$COMFYUI_WAS_CLONED"
 
 # ============================================================================
 # [6/10] Clone Custom Nodes

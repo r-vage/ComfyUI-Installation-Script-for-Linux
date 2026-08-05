@@ -149,6 +149,8 @@ If the alias prompt is left empty, the installer checks existing shell/profile d
 Static configuration (Python, PyTorch, NumPy, Transformers, launch arguments) stays at the top of the script and rarely changes.
 Set `INSTALL_COMFYUI_FRONTEND=false` (`$false` on Windows) to skip the frontend-version prompt and prevent every installer and launcher path from installing, upgrading, downgrading, or enforcing `comfyui-frontend-package`. This includes frontend pins pulled from ComfyUI or custom-node requirements.
 
+When sharing is enabled for a new installation, files introduced by the fresh ComfyUI checkout are copied into the shared directory only when the same relative path does not already exist. Existing shared files are never overwritten. The checkout folder is then removed and replaced by the symlink or junction. This also repairs a previous incomplete sharing setup when the local folder still contains only pristine checkout files. If an existing local installation contains modified, untracked, or ignored files while the shared directory also contains data, both directories are preserved and the installer asks you to merge them manually.
+
 **Multiple ComfyUI Installations**:
 Simply run the script again with different values at the prompts:
 ```
