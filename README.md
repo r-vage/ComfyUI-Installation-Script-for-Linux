@@ -5,19 +5,21 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 ## 🌟 Features
 
 - **Automated Environment Setup**: Installs pyenv, Python, and creates an isolated virtual environment
-- **Interactive Prompts**: Collects ComfyUI version, frontend version, and alias name at runtime
+- **Interactive Prompts**: Collects ComfyUI version, optional managed frontend version, and alias name at runtime
 - **Version Control**: Pin specific versions of ComfyUI, PyTorch, NumPy, Transformers, and other critical packages
-- **Frontend Pinning**: Each alias/launcher auto-installs the correct frontend version on launch
+- **Optional Frontend Pinning**: Pin a frontend per launcher or preserve a custom/existing frontend package
 - **GPU Acceleration**: Supports CUDA 13.0, CUDA 12.8, CUDA 12.6, ROCm 7.1, and CPU-only installations
 - **Performance Optimization**: Includes optional Nunchaku, Flash Attention, and Sage Attention
-- **Custom Node Collection**: Automatically clones and configures 45+ popular custom nodes
+- **Custom Node Collection**: Automatically clones and configures 51 popular custom nodes
 - **Lowercase Cloning**: Clones custom nodes with lowercase directory names to match ComfyUI-Manager convention
 - **Selective Installation**: Choose which components to install via interactive menu
 - **Smart Dependency Management**: Prevents version conflicts by enforcing package versions
-- **Symlink Support**: Centralize models, input, output, user data, and custom_nodes across multiple installations
+- **Per-Directory Sharing**: Independently centralize models, input, output, user data, and custom_nodes
 - **Multi-Install Support**: Run multiple ComfyUI versions side-by-side with per-version aliases and launchers
 - **Shell Integration**: Adds user-chosen aliases (e.g., `comfy2`, `comfy3`) with non-destructive, additive handling
+- **Automatic Alias Naming**: Leaving the alias prompt empty selects `comfy`, then `comfy1`, `comfy2`, and so on
 - **Multiple Shell Support**: Auto-detects and configures bash, zsh, and fish shells
+- **Launch Arguments**: Append configurable flags to every generated alias and launcher
 
 ## 📋 Prerequisites
 
@@ -130,36 +132,43 @@ These versions are enforced at the end of installation to override any conflicti
 
 ### ComfyUI Installation (Interactive)
 
-When you run the script, it prompts for three values:
+When frontend management is enabled (the default), the script prompts for three values:
 
 ```
 Enter values for this installation (press Enter for defaults):
 
-  ComfyUI version [0.19.3]:     # → clones/checks out this tag (e.g., v0.19.3)
-  Frontend version [1.42.11]:   # → pinned in aliases and launchers
-  Launch alias [comfyui]:       # → shell alias name (e.g., comfy2, comfy3)
+  ComfyUI version [0.28.0]:     # → clones/checks out this tag (e.g., v0.28.0)
+  Frontend version [1.45.21]:   # → pinned in aliases and launchers
+  Launch alias [comfy]:         # → first available name (comfy, comfy1, comfy2, ...)
 ```
 
-The folder name is derived automatically: version `0.19.3` → `ComfyUI_0.19.3`.
+The folder name is derived automatically: version `0.28.0` → `ComfyUI_0.28.0`.
 
-Static configuration (Python, PyTorch, NumPy, Transformers) stays at the top of the script and rarely changes.
+If the alias prompt is left empty, the installer checks existing shell/profile definitions and generated launcher files, then uses the first available name in the sequence `comfy`, `comfy1`, `comfy2`, etc. An explicitly entered alias is always used unchanged.
+
+Static configuration (Python, PyTorch, NumPy, Transformers, launch arguments) stays at the top of the script and rarely changes.
+Set `INSTALL_COMFYUI_FRONTEND=false` (`$false` on Windows) to skip the frontend-version prompt and prevent every installer and launcher path from installing, upgrading, downgrading, or enforcing `comfyui-frontend-package`. This includes frontend pins pulled from ComfyUI or custom-node requirements.
 
 **Multiple ComfyUI Installations**:
 Simply run the script again with different values at the prompts:
 ```
-# First run:   version 0.19.3, alias comfyui   → /mnt/data/AI/ComfyUI_0.19.3
-# Second run:  version 0.19.0, alias comfy2     → /mnt/data/AI/ComfyUI_0.19.0
-# Third run:   version 0.18.2, alias comfy3     → /mnt/data/AI/ComfyUI_0.18.2
+# First run:   version 0.28.0, alias comfy    → /mnt/data/AI/ComfyUI_0.28.0
+# Second run:  version 0.19.0, alias comfy1   → /mnt/data/AI/ComfyUI_0.19.0
+# Third run:   version 0.18.2, alias comfy2   → /mnt/data/AI/ComfyUI_0.18.2
 ```
 
-Each installation gets its own alias and launcher script (`start_comfy2.sh`, `start_comfy3.bat`).
-All installations share the same venv, models, input, output, user data, and custom nodes via symlinks.
+Each installation gets its own alias and launcher script (`start_comfy2.sh` on Linux or `comfy2.bat`/`comfy2.ps1` on Windows).
+All installations share the same venv. The five directory-sharing settings below determine whether models, input, output, user data, and custom nodes are shared or local to each installation.
 The `envact` alias is always shared (one venv for all installs).
 
 ### Symlink / Junction Configuration
 
 ```bash
-CREATE_SYMLINKS=true                # Enable/disable symlink creation
+SYMLINK_MODELS=true                 # Share models
+SYMLINK_INPUT=true                  # Share input
+SYMLINK_OUTPUT=true                 # Share output
+SYMLINK_USER=true                   # Share settings, workflows, and templates
+SYMLINK_CUSTOM_NODES=true           # Share custom nodes
 USER_MODELS_PATH="/mnt/data/AI/models"          # Centralized models directory
 USER_INPUT_PATH="/mnt/data/AI/input"            # Centralized input directory
 USER_OUTPUT_PATH="/mnt/data/AI/output"          # Centralized output directory
@@ -167,7 +176,7 @@ USER_USERDATA_PATH="/mnt/data/AI/user"          # Centralized user directory (se
 USER_CUSTOM_NODES_PATH="/mnt/data/AI/custom_nodes"  # Centralized custom_nodes directory
 ```
 
-> **Windows equivalent:** `$CREATE_SYMLINKS = $true` — paths default to `D:\AI\models`, `D:\AI\input`, `D:\AI\output`, `D:\AI\user`, `D:\AI\custom_nodes` (uses directory junctions instead of symlinks)
+> **Windows equivalent:** use `$SYMLINK_MODELS`, `$SYMLINK_INPUT`, `$SYMLINK_OUTPUT`, `$SYMLINK_USER`, and `$SYMLINK_CUSTOM_NODES` with `$true`/`$false`. Paths default to `D:\AI\models`, `D:\AI\input`, `D:\AI\output`, `D:\AI\user`, and `D:\AI\custom_nodes` (using directory junctions instead of symlinks).
 
 **Symlinks allow you to**:
 - Share models across multiple ComfyUI installations
@@ -177,7 +186,9 @@ USER_CUSTOM_NODES_PATH="/mnt/data/AI/custom_nodes"  # Centralized custom_nodes d
 - Store models on a different drive/partition
 - Keep outputs in a centralized location
 
-Set `CREATE_SYMLINKS=false` to use the default per-installation directories.
+Set any `SYMLINK_*` variable to `false` to keep that directory local. If an older run already created a link for a disabled path, the installer preserves it and prints removal instructions rather than detaching it automatically.
+
+Migration is conservative: populated local data is copied only when the shared target is empty. If both directories contain data, both are preserved and the link is skipped until you merge them manually. A failed copy never causes the local directory to be removed.
 
 > **Tip — directories outside `BASE_PATH`:**
 > By default, the centralized paths (`USER_MODELS_PATH`, `USER_INPUT_PATH`, `USER_OUTPUT_PATH`, `USER_USERDATA_PATH`, `USER_CUSTOM_NODES_PATH`) are derived from `BASE_PATH`. You can point any of them to a completely different location — for example a larger disk — by editing the *"Derived Paths"* section in the script:
@@ -201,7 +212,11 @@ Set `CREATE_SYMLINKS=false` to use the default per-installation directories.
 
 ```bash
 INSTALL_NUNCHAKU=true               # Nunchaku acceleration (requires NVIDIA GPU)
+INSTALL_COMFYUI_FRONTEND=true       # Pin/install the configured frontend package
+COMFYUI_LAUNCH_ARGS="--multi-user --disable-pinned-memory"
 ```
+
+`COMFYUI_LAUNCH_ARGS` is appended after `python main.py` in every generated alias and launcher. Set it to an empty string to launch without predefined flags. Arguments supplied when invoking a launcher are appended after these configured defaults.
 
 Set to `false` to skip Nunchaku installation if you don't have an NVIDIA GPU or don't need this optimization.
 
@@ -216,74 +231,85 @@ The script is divided into 11 steps that you can run selectively:
 3. **Nunchaku** - Acceleration library (optional, NVIDIA GPU only)
 4. **Face Recognition** - facexlib, insightface, onnxruntime-gpu, facenet_pytorch
 5. **ComfyUI Core** - ComfyUI base installation and requirements
-6. **Custom Nodes** - 45+ popular custom nodes (see list below)
+6. **Custom Nodes** - 51 popular custom nodes (see list below)
 7. **Custom Node Dependencies** - Install requirements for all custom nodes
 8. **Performance Libraries** - llama-cpp-python, flash-attn, sageattention
 9. **Upgrade/Pin Packages** - Upgrade specific packages to latest compatible versions
 10. **Enforce Versions** - Force exact versions of PyTorch, NumPy, Transformers, ComfyUI Frontend
 11. **Shell Aliases** - Add user-chosen launch alias and `envact` alias to shell config
 
-### Custom Nodes Included (45 nodes)
+### Custom Nodes Included (51 nodes)
 
 #### Core Extensions
-- ComfyUI_SmartLML - Smart Language Model Loader
-- ComfyUI_Eclipse - Extended toolkit
-- ComfyUI-Manager - Node manager
+- [ComfyUI_Eclipse](https://github.com/r-vage/ComfyUI_Eclipse) - Extended toolkit with Smart LM subsystem
+- [ComfyUI-Manager](https://github.com/Comfy-Org/ComfyUI-Manager) - Node manager
+
+> `ComfyUI-GGUF` and `ComfyUI-Florence2` are supplied through Eclipse's external-node integration and are not cloned separately.
 
 #### UI & Workflow Tools
-- ComfyUI-Crystools-MonitorOnly - System monitoring
-- ComfyUI-Custom-Scripts - UI enhancements
-- rgthree-comfy - Workflow utilities
-- ComfyUI-Easy-Use - Simplified nodes
-- ComfyUI_essentials - Essential utilities
-- ComfyUI_essentials_mb - Additional essentials
-- cg-image-filter - Image filter/selector
+- [ComfyUI-Crystools-MonitorOnly](https://github.com/BobRandomNumber/ComfyUI-Crystools-MonitorOnly) - System resource monitoring
+- [ComfyUI-Custom-Scripts](https://github.com/pythongosssss/ComfyUI-Custom-Scripts) - UI enhancements
+- [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) - Workflow utilities
+- [ComfyUI-Easy-Use](https://github.com/yolain/ComfyUI-Easy-Use) - Simplified nodes
+- [ComfyUI_essentials](https://github.com/cubiq/ComfyUI_essentials) - Essential utilities
+- [ComfyUI_essentials_mb](https://github.com/MinorBoy/ComfyUI_essentials_mb) - Additional essentials
+- [cg-image-filter](https://github.com/chrisgoringe/cg-image-filter) - Image filter/selector
+- [comfyui-find-perfect-resolution](https://github.com/ashtar1984/comfyui-find-perfect-resolution) - Resolution calculator
+- [WhatDreamsCost-ComfyUI](https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI) - Free workflow and media-generation utilities
+- [ComfyUI-DaSiWa-Nodes](https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes) - DaSiWa utility nodes
+- [Nvidia_RTX_Nodes_ComfyUI](https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI) - NVIDIA RTX optimization nodes
 
 #### Model Support & Optimization
-- ComfyUI-GGUF - GGUF model support
-- ComfyUI-nunchaku - Nunchaku integration (optional)
-- ComfyUI-TeaCache - Caching optimizations
-- ComfyUI_Patches_ll - Performance patches
-- ComfyUI_IPAdapter_plus - IP-Adapter support
+- [ComfyUI-TeaCache](https://github.com/welltop-cn/ComfyUI-TeaCache) - Cache-based inference acceleration
+- [ComfyUI_Patches_ll](https://github.com/lldacing/ComfyUI_Patches_ll) - Performance patches
 
 #### Sampling & Scheduling
-- RES4LYF - Advanced samplers, schedulers, and noise types
-- sd-dynamic-thresholding - Dynamic CFG thresholding
-- ComfyUI-Raffle - Sampling utilities
-- SeedVarianceEnhancer - Seed variance control
-- ComfyUI-DyPE - Dynamic prompt expansion
+- [RES4LYF](https://github.com/r-vage/RES4LYF) - Advanced samplers, schedulers, and noise types (fork)
+- [sd-dynamic-thresholding](https://github.com/mcmonkeyprojects/sd-dynamic-thresholding) - Dynamic CFG thresholding
+- [ComfyUI-Raffle](https://github.com/r-vage/ComfyUI-Raffle) - Semi-random prompt generator for danbooru tags (fork)
+- [SeedVarianceEnhancer](https://github.com/ChangeTheConstants/SeedVarianceEnhancer) - Adds diversity to Z-Image Turbo outputs
+- [ComfyUI-DyPE](https://github.com/wildminder/ComfyUI-DyPE) - Artifact-free 4K+ image generation
+- [comfyui-WhiteRabbit](https://github.com/Artificial-Sweetener/comfyui-WhiteRabbit) - White Rabbit nodes
 
 #### ControlNet & Advanced Control
-- ComfyUI-Advanced-ControlNet - Advanced ControlNet features
-- comfyui_controlnet_aux - ControlNet preprocessors
+- [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) - Advanced ControlNet features
+- [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) - ControlNet preprocessors
 
 #### Image Processing & Effects
-- ComfyUI-Impact-Pack - Image enhancement suite
-- ComfyUI-Impact-Subpack - Impact Pack extensions
-- ComfyUI_LayerStyle - Layer effects
-- ComfyUI_LayerStyle_Advance - Advanced layer effects
-- ComfyUI-Detail-Daemon - Detail enhancement
-- ComfyUI-KJNodes - Various utilities
-- Comfyui_TTP_Toolset - Additional tools
-- ComfyUI_UltimateSDUpscale - Tiled upscaling
-- ComfyUI-VAE-Utils - VAE utilities
-- was-node-suite-comfyui - WAS toolkit
-- comfy_mtb - MTB's custom nodes
+- [ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack) - Image enhancement suite
+- [ComfyUI-Impact-Subpack](https://github.com/ltdrdata/ComfyUI-Impact-Subpack) - Impact Pack extensions
+- [ComfyUI_LayerStyle](https://github.com/chflame163/ComfyUI_LayerStyle) - Layer effects
+- [ComfyUI_LayerStyle_Advance](https://github.com/chflame163/ComfyUI_LayerStyle_Advance) - Advanced layer effects
+- [ComfyUI-Detail-Daemon](https://github.com/Jonseed/ComfyUI-Detail-Daemon) - Detail enhancement
+- [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) - Various utilities
+- [ComfyUI_UltimateSDUpscale](https://github.com/ssitu/ComfyUI_UltimateSDUpscale) - Tiled upscaling
+- [ComfyUI-CorridorKey](https://github.com/SeanBRVFX/ComfyUI-CorridorKey) - Native CorridorKey foreground and alpha-matting inference
+- [ComfyUI_Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes) - Image, video, audio, file, and workflow utilities
+- [ComfyUI-TiledDiffusion](https://github.com/shiimizu/ComfyUI-TiledDiffusion) - Tiled diffusion and VAE processing for large images
 
 #### Specialized Models
-- ComfyUI-Florence2 - Florence2 model support
-- ComfyUI-SUPIR - Super resolution
-- ComfyUI_BiRefNet_ll - Background removal
-- ComfyUI_PuLID_Flux_ll - Face ID for Flux
-- ComfyUI-ReActor - Face swapping
+- [ComfyUI-SUPIR](https://github.com/kijai/ComfyUI-SUPIR) - Super resolution
+- [ComfyUI_BiRefNet_ll](https://github.com/lldacing/ComfyUI_BiRefNet_ll) - Background removal
+- [ComfyUI_PuLID_Flux_ll](https://github.com/r-vage/ComfyUI_PuLID_Flux_ll) - Face ID for Flux (project fork)
+- [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) - Instruction-based Krea 2 image editing
+- [ComfyUI-Krea2T-Enhancer](https://github.com/capitan01R/ComfyUI-Krea2T-Enhancer) - Krea 2 prompt-adherence enhancement
+- [ComfyUI-SCAIL-Pose](https://github.com/kijai/ComfyUI-SCAIL-Pose) - Pose estimation
+
+#### Audio & Media
+- [ComfyUI-MMAudio](https://github.com/kijai/ComfyUI-MMAudio) - Multi-modal audio generation
+- [ComfyUI-MelBandRoFormer](https://github.com/kijai/ComfyUI-MelBandRoFormer) - Audio source separation
+- [comfyui-audio-expo](https://github.com/mattjohnpowell/comfyui-audio-expo) - Audio export utilities
 
 #### Video Processing
-- ComfyUI-VideoHelperSuite - Video utilities
-- ComfyUI-Frame-Interpolation - Video frame interpolation
-- ComfyUI-GIMM-VFI - Video frame interpolation
-- ComfyUI-WanVideoWrapper - Wan video generation
-- ComfyUI-SeedVR2_VideoUpscaler - Video upscaling
-- ComfyUI-WanMoeKSampler - Wan MoE sampling
+- [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) - Video utilities
+- [ComfyUI-Frame-Interpolation](https://github.com/Fannovel16/ComfyUI-Frame-Interpolation) - Video frame interpolation
+- [ComfyUI-GIMM-VFI](https://github.com/kijai/ComfyUI-GIMM-VFI) - GIMM video frame interpolation
+- [ComfyUI-VFI](https://github.com/GACLove/ComfyUI-VFI) - RIFE video frame interpolation
+- [ComfyUI-WanVideoWrapper](https://github.com/kijai/ComfyUI-WanVideoWrapper) - Wan video generation
+- [ComfyUI-WanAnimatePreprocess](https://github.com/kijai/ComfyUI-WanAnimatePreprocess) - Wan animate preprocessing
+- [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) - Video upscaling
+- [ComfyUI-WanMoeKSampler](https://github.com/stduhpf/ComfyUI-WanMoeKSampler) - Wan MoE sampling
+- [ComfyUI-LTXVideo](https://github.com/Lightricks/ComfyUI-LTXVideo) - LTX video generation
 
 ## 🎯 Usage
 
@@ -326,7 +352,7 @@ After installation, you have several options (examples assume alias `comfy2` and
 
 **Option 2: Shell alias (if Step 11 was run)**
 ```bash
-comfy2    # Auto-installs correct frontend, activates env, launches ComfyUI
+comfy2    # Activates the environment and launches ComfyUI
 ```
 
 **Option 3: Manual**
@@ -340,12 +366,12 @@ python main.py
 
 **Option 1: Double-click launcher**
 ```
-D:\AI\start_comfy2.bat
+D:\AI\comfy2.bat
 ```
 
 **Option 2: PowerShell launcher**
 ```powershell
-D:\AI\start_comfy2.ps1
+D:\AI\comfy2.ps1
 ```
 
 **Option 3: PowerShell alias (if Step 11 was run, after reloading profile)**
@@ -360,7 +386,7 @@ cd "D:\AI\ComfyUI_0.19.0"
 python main.py
 ```
 
-Each alias and launcher automatically pins the correct frontend version via `uv pip install -q comfyui-frontend-package==VERSION` (instant no-op when already installed).
+With `INSTALL_COMFYUI_FRONTEND=true`, each alias and launcher pins the configured frontend via `uv pip install -q comfyui-frontend-package==VERSION` (an instant no-op when already installed). With it disabled, launchers leave the current/custom frontend untouched. Both modes append `COMFYUI_LAUNCH_ARGS` to `python main.py`.
 
 ### Activating Virtual Environment Only
 

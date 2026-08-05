@@ -29,19 +29,24 @@ PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"  # PyTorch index URL 
 # Critical package versions (enforced at end to override custom node dependencies)
 NUMPY_VERSION="2.2.6"               # NumPy version (2.2.x compatible with PyTorch 2.9+)
 TRANSFORMERS_VERSION="5.3.0"       # Transformers version (5.x for Qwen3-VL/Mistral3 support)
-COMFYUI_FRONTEND_VERSION="1.44.19"  # ComfyUI frontend version (installed in venv's site-packages)
+COMFYUI_FRONTEND_VERSION="1.45.21"  # ComfyUI frontend version (installed in venv's site-packages)
 
 # ComfyUI installation defaults (overridden by interactive prompts below)
-DEFAULT_COMFYUI_VERSION="0.23.0"     # Default ComfyUI version (numeric, e.g., 0.18.0)
-DEFAULT_FRONTEND_VERSION="1.44.19"   # Default frontend version (numeric, e.g., 1.41.21)
-DEFAULT_ALIAS="comfyui"              # Default shell alias (e.g., comfyui, comfy2, comfy3)
+DEFAULT_COMFYUI_VERSION="0.28.0"     # Default ComfyUI version (numeric, e.g., 0.28.0)
+DEFAULT_FRONTEND_VERSION="1.45.21"   # Default frontend version (numeric, e.g., 1.45.21)
+DEFAULT_ALIAS="comfy"                # Alias base; auto-increments when the prompt is left empty
+COMFYUI_LAUNCH_ARGS="--disable-pinned-memory"  # Arguments appended to python main.py
 
-# Symlink configuration for models, input, output, user, and custom_nodes
-CREATE_SYMLINKS=true                # Set to false to skip all symlink creation
-SYMLINK_CUSTOM_NODES=true           # Set to false to keep custom_nodes as a regular directory (only applies if CREATE_SYMLINKS=true)
+# Shared-directory configuration (set individual paths to false to keep them local)
+SYMLINK_MODELS=true                 # Share models across ComfyUI installations
+SYMLINK_INPUT=true                  # Share input across ComfyUI installations
+SYMLINK_OUTPUT=true                 # Share output across ComfyUI installations
+SYMLINK_USER=true                   # Share user settings, workflows, and templates
+SYMLINK_CUSTOM_NODES=true           # Share custom_nodes across ComfyUI installations
 
 # Optional features (set to false to disable)
-INSTALL_NUNCHAKU=true               # Set to false to skip Nunchaku (NVIDIA GPU required)
+INSTALL_NUNCHAKU=false              # Set to false to skip Nunchaku (NVIDIA GPU required)
+INSTALL_COMFYUI_FRONTEND=false       # Set to false to preserve a custom/existing frontend package
 
 # ============================================
 # Derived Paths (auto-generated from BASE_PATH)
@@ -65,7 +70,7 @@ INSTALL_NUNCHAKU=true               # Set to false to skip Nunchaku (NVIDIA GPU 
 #   USER_CUSTOM_NODES_PATH="/mnt/data/shared_custom_nodes"
 #
 # The script will create the directories if they don't exist and symlink
-# them into the ComfyUI tree (when CREATE_SYMLINKS=true).
+# them into the ComfyUI tree when their corresponding SYMLINK_* setting is true.
 # ============================================
 VENV_PATH="$BASE_PATH/comfy_env"                # Virtual environment location
 COMFYUI_PARENT_DIR="$BASE_PATH"                 # Parent directory where ComfyUI will be cloned
@@ -98,6 +103,38 @@ else
     SHELL_CONFIG_FILE="~/.profile"
 fi
 
+alias_name_exists() {
+    local candidate="$1"
+    local config_file
+
+    if [ -e "$COMFYUI_PARENT_DIR/start_${candidate}.sh" ]; then
+        return 0
+    fi
+
+    for config_file in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
+        if [ -f "$config_file" ] && {
+            grep -q "^alias ${candidate}=" "$config_file" 2>/dev/null ||
+            grep -q "^function ${candidate}\$" "$config_file" 2>/dev/null
+        }; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+get_next_alias_name() {
+    local candidate="$DEFAULT_ALIAS"
+    local suffix=1
+
+    while alias_name_exists "$candidate"; do
+        candidate="${DEFAULT_ALIAS}${suffix}"
+        suffix=$((suffix + 1))
+    done
+
+    echo "$candidate"
+}
+
 # ============================================
 # Interactive Prompts — collect per-install values
 # ============================================
@@ -114,13 +151,19 @@ echo ""
 read -p "  ComfyUI version [${DEFAULT_COMFYUI_VERSION}]: " INPUT_COMFYUI_VERSION
 INPUT_COMFYUI_VERSION="${INPUT_COMFYUI_VERSION:-$DEFAULT_COMFYUI_VERSION}"
 
-# Frontend version (numeric) → used directly as pip package version
-read -p "  Frontend version [${DEFAULT_FRONTEND_VERSION}]: " INPUT_FRONTEND_VERSION
-INPUT_FRONTEND_VERSION="${INPUT_FRONTEND_VERSION:-$DEFAULT_FRONTEND_VERSION}"
+# Frontend version (numeric) → used directly as pip package version when managed
+if $INSTALL_COMFYUI_FRONTEND; then
+    read -p "  Frontend version [${DEFAULT_FRONTEND_VERSION}]: " INPUT_FRONTEND_VERSION
+    INPUT_FRONTEND_VERSION="${INPUT_FRONTEND_VERSION:-$DEFAULT_FRONTEND_VERSION}"
+else
+    INPUT_FRONTEND_VERSION=""
+fi
 
-# Shell alias name → derives COMFYUI_ALIAS and ENVACT_ALIAS
-read -p "  Launch alias [${DEFAULT_ALIAS}]: " INPUT_ALIAS
-INPUT_ALIAS="${INPUT_ALIAS:-$DEFAULT_ALIAS}"
+# Shell alias name → derives COMFYUI_ALIAS and ENVACT_ALIAS. When left empty,
+# use the first available name: comfy, comfy1, comfy2, ...
+SUGGESTED_ALIAS=$(get_next_alias_name)
+read -p "  Launch alias [${SUGGESTED_ALIAS}]: " INPUT_ALIAS
+INPUT_ALIAS="${INPUT_ALIAS:-$SUGGESTED_ALIAS}"
 
 echo ""
 
@@ -129,6 +172,60 @@ COMFYUI_VERSION="v${INPUT_COMFYUI_VERSION}"                               # e.g.
 COMFYUI_DIR_NAME="ComfyUI_${INPUT_COMFYUI_VERSION}"                         # e.g., ComfyUI_0.18.2 (full version)
 COMFYUI_FRONTEND_VERSION="${INPUT_FRONTEND_VERSION}"                       # e.g., 1.41.21
 COMFYUI_ALIAS="${INPUT_ALIAS}"                                            # e.g., comfyui or comfy2
+
+# Exclude the official frontend package from every uv resolution when the user
+# manages a custom frontend. This also covers ComfyUI/custom-node requirements.
+FRONTEND_EXCLUDE_FILE=""
+ORIGINAL_UV_EXCLUDE="${UV_EXCLUDE-}"
+UV_EXCLUDE_WAS_SET=false
+if [[ -v UV_EXCLUDE ]]; then
+    UV_EXCLUDE_WAS_SET=true
+fi
+
+cleanup_frontend_exclude() {
+    if $UV_EXCLUDE_WAS_SET; then
+        export UV_EXCLUDE="$ORIGINAL_UV_EXCLUDE"
+    else
+        unset UV_EXCLUDE
+    fi
+    if [ -n "$FRONTEND_EXCLUDE_FILE" ] && [ -f "$FRONTEND_EXCLUDE_FILE" ]; then
+        rm -f "$FRONTEND_EXCLUDE_FILE"
+    fi
+}
+
+if ! $INSTALL_COMFYUI_FRONTEND; then
+    FRONTEND_EXCLUDE_FILE=$(mktemp)
+    printf '%s\n' 'comfyui-frontend-package' > "$FRONTEND_EXCLUDE_FILE"
+    if [ -n "$ORIGINAL_UV_EXCLUDE" ]; then
+        export UV_EXCLUDE="$ORIGINAL_UV_EXCLUDE $FRONTEND_EXCLUDE_FILE"
+    else
+        export UV_EXCLUDE="$FRONTEND_EXCLUDE_FILE"
+    fi
+    trap cleanup_frontend_exclude EXIT
+fi
+
+install_uv_requirements() {
+    local requirements_file="$1"
+    shift
+
+    if $INSTALL_COMFYUI_FRONTEND; then
+        uv pip install "$@" -r "$requirements_file"
+        return
+    fi
+
+    local filtered_requirements
+    local install_status
+    filtered_requirements=$(mktemp)
+    grep -Eiv '^[[:space:]]*comfyui[-_.]frontend[-_.]package([^[:alnum:]_-].*)?$' "$requirements_file" > "$filtered_requirements" || true
+
+    if uv pip install "$@" -r "$filtered_requirements"; then
+        install_status=0
+    else
+        install_status=$?
+    fi
+    rm -f "$filtered_requirements"
+    return "$install_status"
+}
 
 # Derive envact alias: always "envact" since all installs share the same venv
 ENVACT_ALIAS="envact"
@@ -143,7 +240,11 @@ if [ -n "$COMFYUI_VERSION" ]; then
 else
     echo "  ComfyUI Version: Latest (default branch)"
 fi
-echo "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
+if $INSTALL_COMFYUI_FRONTEND; then
+    echo "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
+else
+    echo "  ComfyUI Frontend: Unmanaged (preserving custom/existing package)"
+fi
 echo "  Python Version: $PYTHON_VERSION"
 echo "  PyTorch Version: $PYTORCH_FULL_VERSION (torchvision/torchaudio auto-selected)"
 echo "  NumPy Version: $NUMPY_VERSION"
@@ -160,22 +261,14 @@ echo "  ComfyUI Location: $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME"
 echo "  Virtual Env: $VENV_PATH"
 echo "  Pyenv Root: $PYENV_ROOT"
 echo "  Aliases: $COMFYUI_ALIAS (launch), $ENVACT_ALIAS (activate venv)"
+echo "  Launch Arguments: ${COMFYUI_LAUNCH_ARGS:-None}"
 echo ""
-echo "  Symlink Configuration:"
-if [ "$CREATE_SYMLINKS" = true ]; then
-    echo "  Symlinks: Enabled"
-    echo "    Models:       $USER_MODELS_PATH → $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME/models"
-    echo "    Input:        $USER_INPUT_PATH → $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME/input"
-    echo "    Output:       $USER_OUTPUT_PATH → $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME/output"
-    echo "    User Data:    $USER_USERDATA_PATH → $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME/user"
-    if [ "$SYMLINK_CUSTOM_NODES" = true ]; then
-        echo "    Custom Nodes: $USER_CUSTOM_NODES_PATH → $COMFYUI_PARENT_DIR/$COMFYUI_DIR_NAME/custom_nodes"
-    else
-        echo "    Custom Nodes: Regular directory (no symlink)"
-    fi
-else
-    echo "  Symlinks: Disabled"
-fi
+echo "  Directory Sharing:"
+$SYMLINK_MODELS && echo "    Models:       Shared ($USER_MODELS_PATH)" || echo "    Models:       Local"
+$SYMLINK_INPUT && echo "    Input:        Shared ($USER_INPUT_PATH)" || echo "    Input:        Local"
+$SYMLINK_OUTPUT && echo "    Output:       Shared ($USER_OUTPUT_PATH)" || echo "    Output:       Local"
+$SYMLINK_USER && echo "    User Data:    Shared ($USER_USERDATA_PATH)" || echo "    User Data:    Local"
+$SYMLINK_CUSTOM_NODES && echo "    Custom Nodes: Shared ($USER_CUSTOM_NODES_PATH)" || echo "    Custom Nodes: Local"
 echo "=========================================="
 echo ""
 echo "Select installation steps (numbers, ranges, or 'a' for all — e.g., 6-10 or 1 5 6-8 or 5,11):"
@@ -630,192 +723,107 @@ torch==${PYTORCH_FULL_VERSION}
 numpy>=${NUMPY_VERSION}
 EOF
 echo "Using constraints to prevent torch/numpy downgrade"
-uv pip install --constraint "$CONSTRAINTS_FILE" -r requirements.txt
+install_uv_requirements requirements.txt --constraint "$CONSTRAINTS_FILE"
 rm -f "$CONSTRAINTS_FILE"
 
 fi  # End STEP_5
 
 # ============================================================================
-# Create Symlinks for Models and Output
+# Configure Shared/Local ComfyUI Directories
 # ============================================================================
-if $CREATE_SYMLINKS; then
 
-# Ensure COMFYUI_DIR is set
+# Ensure COMFYUI_DIR is set (may not be if STEP_5 was skipped)
 COMFYUI_DIR="${COMFYUI_DIR:-${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}}"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════════"
-echo "  Creating Symlinks for Models, Input, Output, User Data, and Custom Nodes"
+echo "  Configuring Shared and Local Directories"
 echo "═══════════════════════════════════════════════════════════════════"
 echo ""
 
-# Create user directories if they don't exist
-mkdir -p "$USER_MODELS_PATH"
-mkdir -p "$USER_INPUT_PATH"
-mkdir -p "$USER_OUTPUT_PATH"
-mkdir -p "$USER_USERDATA_PATH"
-mkdir -p "$USER_CUSTOM_NODES_PATH"
+configure_shared_directory() {
+    local name="$1"
+    local local_path="$2"
+    local shared_path="$3"
+    local enabled="$4"
 
-# Handle models directory
-if [ -L "$COMFYUI_DIR/models" ]; then
-    # Check if symlink points to the correct target
-    CURRENT_TARGET=$(readlink "$COMFYUI_DIR/models")
-    if [ "$CURRENT_TARGET" = "$USER_MODELS_PATH" ]; then
-        echo "✓ models is already a symlink to correct location"
-    else
-        echo "⚠️  models symlink points to wrong location:"
-        echo "   Current: $CURRENT_TARGET"
-        echo "   Expected: $USER_MODELS_PATH"
-        echo "   Removing old symlink and creating correct one..."
-        rm -f "$COMFYUI_DIR/models"
-        ln -s "$USER_MODELS_PATH" "$COMFYUI_DIR/models"
-        echo "✓ Fixed symlink: $COMFYUI_DIR/models -> $USER_MODELS_PATH"
-    fi
-elif [ -d "$COMFYUI_DIR/models" ]; then
-    echo "⚠️  Removing existing models directory at $COMFYUI_DIR/models"
-    rm -rf "$COMFYUI_DIR/models"
-    ln -s "$USER_MODELS_PATH" "$COMFYUI_DIR/models"
-    echo "✓ Created symlink: $COMFYUI_DIR/models -> $USER_MODELS_PATH"
-else
-    ln -s "$USER_MODELS_PATH" "$COMFYUI_DIR/models"
-    echo "✓ Created symlink: $COMFYUI_DIR/models -> $USER_MODELS_PATH"
-fi
-
-# Handle output directory
-if [ -L "$COMFYUI_DIR/output" ]; then
-    # Check if symlink points to the correct target
-    CURRENT_TARGET=$(readlink "$COMFYUI_DIR/output")
-    if [ "$CURRENT_TARGET" = "$USER_OUTPUT_PATH" ]; then
-        echo "✓ output is already a symlink to correct location"
-    else
-        echo "⚠️  output symlink points to wrong location:"
-        echo "   Current: $CURRENT_TARGET"
-        echo "   Expected: $USER_OUTPUT_PATH"
-        echo "   Removing old symlink and creating correct one..."
-        rm -f "$COMFYUI_DIR/output"
-        ln -s "$USER_OUTPUT_PATH" "$COMFYUI_DIR/output"
-        echo "✓ Fixed symlink: $COMFYUI_DIR/output -> $USER_OUTPUT_PATH"
-    fi
-elif [ -d "$COMFYUI_DIR/output" ]; then
-    echo "⚠️  Removing existing output directory at $COMFYUI_DIR/output"
-    rm -rf "$COMFYUI_DIR/output"
-    ln -s "$USER_OUTPUT_PATH" "$COMFYUI_DIR/output"
-    echo "✓ Created symlink: $COMFYUI_DIR/output -> $USER_OUTPUT_PATH"
-else
-    ln -s "$USER_OUTPUT_PATH" "$COMFYUI_DIR/output"
-    echo "✓ Created symlink: $COMFYUI_DIR/output -> $USER_OUTPUT_PATH"
-fi
-
-# Handle input directory
-if [ -L "$COMFYUI_DIR/input" ]; then
-    # Check if symlink points to the correct target
-    CURRENT_TARGET=$(readlink "$COMFYUI_DIR/input")
-    if [ "$CURRENT_TARGET" = "$USER_INPUT_PATH" ]; then
-        echo "✓ input is already a symlink to correct location"
-    else
-        echo "⚠️  input symlink points to wrong location:"
-        echo "   Current: $CURRENT_TARGET"
-        echo "   Expected: $USER_INPUT_PATH"
-        echo "   Removing old symlink and creating correct one..."
-        rm -f "$COMFYUI_DIR/input"
-        ln -s "$USER_INPUT_PATH" "$COMFYUI_DIR/input"
-        echo "✓ Fixed symlink: $COMFYUI_DIR/input -> $USER_INPUT_PATH"
-    fi
-elif [ -d "$COMFYUI_DIR/input" ]; then
-    echo "⚠️  Moving existing input to centralized location"
-    # If the centralized location is empty, copy from current installation to preserve existing inputs
-    if [ -z "$(ls -A "$USER_INPUT_PATH" 2>/dev/null)" ]; then
-        echo "   Copying input contents to $USER_INPUT_PATH"
-        if ! cp -r "$COMFYUI_DIR/input/." "$USER_INPUT_PATH/" 2>/dev/null; then
-            echo "⚠️  Warning: Failed to copy some input content, continuing anyway..."
-        fi
-    fi
-    rm -rf "$COMFYUI_DIR/input"
-    ln -s "$USER_INPUT_PATH" "$COMFYUI_DIR/input"
-    echo "✓ Created symlink: $COMFYUI_DIR/input -> $USER_INPUT_PATH"
-else
-    ln -s "$USER_INPUT_PATH" "$COMFYUI_DIR/input"
-    echo "✓ Created symlink: $COMFYUI_DIR/input -> $USER_INPUT_PATH"
-fi
-
-# Handle user directory (settings, workflows, templates) — shared across versions.
-# Cross-version safe: comfy.settings.json is a flat key→value map merged against
-# frontend defaults at runtime, so new/removed/renamed keys are handled gracefully.
-if [ -L "$COMFYUI_DIR/user" ]; then
-    # Check if symlink points to the correct target
-    CURRENT_TARGET=$(readlink "$COMFYUI_DIR/user")
-    if [ "$CURRENT_TARGET" = "$USER_USERDATA_PATH" ]; then
-        echo "✓ user is already a symlink to correct location"
-    else
-        echo "⚠️  user symlink points to wrong location:"
-        echo "   Current: $CURRENT_TARGET"
-        echo "   Expected: $USER_USERDATA_PATH"
-        echo "   Removing old symlink and creating correct one..."
-        rm -f "$COMFYUI_DIR/user"
-        ln -s "$USER_USERDATA_PATH" "$COMFYUI_DIR/user"
-        echo "✓ Fixed symlink: $COMFYUI_DIR/user -> $USER_USERDATA_PATH"
-    fi
-elif [ -d "$COMFYUI_DIR/user" ]; then
-    echo "⚠️  Moving existing user data to centralized location"
-    # If the centralized location is empty, copy from current installation to preserve existing settings/workflows
-    if [ -z "$(ls -A "$USER_USERDATA_PATH" 2>/dev/null)" ]; then
-        echo "   Copying user data to $USER_USERDATA_PATH"
-        if ! cp -r "$COMFYUI_DIR/user/." "$USER_USERDATA_PATH/" 2>/dev/null; then
-            echo "⚠️  Warning: Failed to copy some user data, continuing anyway..."
-        fi
-    fi
-    rm -rf "$COMFYUI_DIR/user"
-    ln -s "$USER_USERDATA_PATH" "$COMFYUI_DIR/user"
-    echo "✓ Created symlink: $COMFYUI_DIR/user -> $USER_USERDATA_PATH"
-else
-    ln -s "$USER_USERDATA_PATH" "$COMFYUI_DIR/user"
-    echo "✓ Created symlink: $COMFYUI_DIR/user -> $USER_USERDATA_PATH"
-fi
-
-# Handle custom_nodes directory
-if [ "$SYMLINK_CUSTOM_NODES" = true ]; then
-    if [ -L "$COMFYUI_DIR/custom_nodes" ]; then
-        # Check if symlink points to the correct target
-        CURRENT_TARGET=$(readlink "$COMFYUI_DIR/custom_nodes")
-        if [ "$CURRENT_TARGET" = "$USER_CUSTOM_NODES_PATH" ]; then
-            echo "✓ custom_nodes is already a symlink to correct location"
+    if [ "$enabled" != true ]; then
+        if [ -L "$local_path" ]; then
+            echo "⚠️  $name: sharing is disabled, but an existing symlink is preserved: $local_path -> $(readlink "$local_path")"
+            echo "   Remove the symlink manually if you want this installation to use a local directory."
+        elif [ -d "$local_path" ]; then
+            echo "✓ $name: using local directory $local_path"
+        elif [ -e "$local_path" ]; then
+            echo "⚠️  $name: cannot create a local directory because a non-directory path exists at $local_path"
         else
-            echo "⚠️  custom_nodes symlink points to wrong location:"
-            echo "   Current: $CURRENT_TARGET"
-            echo "   Expected: $USER_CUSTOM_NODES_PATH"
-            echo "   Removing old symlink and creating correct one..."
-            rm -f "$COMFYUI_DIR/custom_nodes"
-            ln -s "$USER_CUSTOM_NODES_PATH" "$COMFYUI_DIR/custom_nodes"
-            echo "✓ Fixed symlink: $COMFYUI_DIR/custom_nodes -> $USER_CUSTOM_NODES_PATH"
+            mkdir -p "$local_path"
+            echo "✓ $name: created local directory $local_path"
         fi
-    elif [ -d "$COMFYUI_DIR/custom_nodes" ]; then
-        echo "⚠️  Moving existing custom_nodes to centralized location"
-        # If the centralized location is empty or doesn't have content, copy from current installation
-        if [ -z "$(ls -A "$USER_CUSTOM_NODES_PATH" 2>/dev/null)" ]; then
-            echo "   Copying custom_nodes to $USER_CUSTOM_NODES_PATH"
-            if ! cp -r "$COMFYUI_DIR/custom_nodes/." "$USER_CUSTOM_NODES_PATH/" 2>/dev/null; then
-                echo "⚠️  Warning: Failed to copy some custom_nodes content, continuing anyway..."
-            fi
-        fi
-        rm -rf "$COMFYUI_DIR/custom_nodes"
-        ln -s "$USER_CUSTOM_NODES_PATH" "$COMFYUI_DIR/custom_nodes"
-        echo "✓ Created symlink: $COMFYUI_DIR/custom_nodes -> $USER_CUSTOM_NODES_PATH"
-    else
-        ln -s "$USER_CUSTOM_NODES_PATH" "$COMFYUI_DIR/custom_nodes"
-        echo "✓ Created symlink: $COMFYUI_DIR/custom_nodes -> $USER_CUSTOM_NODES_PATH"
+        return
     fi
-else
-    echo "ℹ️  Skipping custom_nodes symlink (SYMLINK_CUSTOM_NODES=false)"
-    # Ensure custom_nodes directory exists as a regular directory
-    if [ ! -d "$COMFYUI_DIR/custom_nodes" ]; then
-        mkdir -p "$COMFYUI_DIR/custom_nodes"
-        echo "✓ Created regular custom_nodes directory"
-    else
-        echo "✓ Using existing custom_nodes directory"
-    fi
-fi
 
-fi  # End CREATE_SYMLINKS
+    mkdir -p "$shared_path"
+
+    if [ -L "$local_path" ]; then
+        local current_target
+        current_target=$(readlink "$local_path")
+        if [ "$current_target" = "$shared_path" ]; then
+            echo "✓ $name: already shared at $shared_path"
+        else
+            echo "⚠️  $name: symlink points to $current_target; relinking to $shared_path"
+            rm -f "$local_path"
+            ln -s "$shared_path" "$local_path"
+            echo "✓ $name: fixed shared symlink"
+        fi
+        return
+    fi
+
+    if [ -d "$local_path" ]; then
+        if [ -z "$(ls -A "$local_path" 2>/dev/null)" ]; then
+            rmdir "$local_path"
+        elif [ -z "$(ls -A "$shared_path" 2>/dev/null)" ]; then
+            echo "→ $name: copying existing local data to $shared_path"
+            if cp -a "$local_path/." "$shared_path/"; then
+                rm -rf "$local_path"
+            else
+                echo "⚠️  $name: copy failed; preserving the local directory and skipping the symlink"
+                return
+            fi
+        else
+            echo "⚠️  $name: local and shared directories both contain data; preserving both and skipping the symlink"
+            echo "   Merge them manually, then rerun the installer."
+            return
+        fi
+    elif [ -e "$local_path" ]; then
+        echo "⚠️  $name: cannot create a symlink because a non-directory path exists at $local_path"
+        return
+    fi
+
+    ln -s "$shared_path" "$local_path"
+    echo "✓ $name: shared $local_path -> $shared_path"
+}
+
+print_directory_state() {
+    local name="$1"
+    local path="$2"
+    local enabled="$3"
+
+    if [ -L "$path" ]; then
+        if [ "$enabled" = true ]; then
+            echo "  $name: Shared ($(readlink "$path"))"
+        else
+            echo "  $name: Existing symlink preserved ($(readlink "$path"))"
+        fi
+    else
+        echo "  $name: Local ($path)"
+    fi
+}
+
+configure_shared_directory "Models" "$COMFYUI_DIR/models" "$USER_MODELS_PATH" "$SYMLINK_MODELS"
+configure_shared_directory "Input" "$COMFYUI_DIR/input" "$USER_INPUT_PATH" "$SYMLINK_INPUT"
+configure_shared_directory "Output" "$COMFYUI_DIR/output" "$USER_OUTPUT_PATH" "$SYMLINK_OUTPUT"
+configure_shared_directory "User Data" "$COMFYUI_DIR/user" "$USER_USERDATA_PATH" "$SYMLINK_USER"
+configure_shared_directory "Custom Nodes" "$COMFYUI_DIR/custom_nodes" "$USER_CUSTOM_NODES_PATH" "$SYMLINK_CUSTOM_NODES"
 
 # ============================================================================
 # [6/10] Clone Custom Nodes
@@ -871,13 +879,13 @@ clone_if_missing "https://github.com/cubiq/ComfyUI_essentials.git"
 clone_if_missing "https://github.com/MinorBoy/ComfyUI_essentials_mb.git"
 clone_if_missing "https://github.com/chrisgoringe/cg-image-filter.git"
 clone_if_missing "https://github.com/ashtar1984/comfyui-find-perfect-resolution"
+clone_if_missing "https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI"
 clone_if_missing "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes"
 clone_if_missing "https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI"
 
 # Model Support & Optimization
 echo ""
 echo "Cloning model support & optimization..."
-clone_if_missing "https://github.com/city96/ComfyUI-GGUF.git"
 clone_if_missing "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
 clone_if_missing "https://github.com/lldacing/ComfyUI_Patches_ll.git"
 
@@ -907,14 +915,18 @@ clone_if_missing "https://github.com/chflame163/ComfyUI_LayerStyle_Advance.git"
 clone_if_missing "https://github.com/Jonseed/ComfyUI-Detail-Daemon.git"
 clone_if_missing "https://github.com/kijai/ComfyUI-KJNodes.git"
 clone_if_missing "https://github.com/ssitu/ComfyUI_UltimateSDUpscale.git"
+clone_if_missing "https://github.com/SeanBRVFX/ComfyUI-CorridorKey"
+clone_if_missing "https://github.com/filliptm/ComfyUI_Fill-Nodes.git"
+clone_if_missing "https://github.com/shiimizu/ComfyUI-TiledDiffusion"
 
 # Specialized Models
 echo ""
 echo "Cloning specialized models..."
-clone_if_missing "https://github.com/kijai/ComfyUI-Florence2.git"
 clone_if_missing "https://github.com/kijai/ComfyUI-SUPIR.git"
 clone_if_missing "https://github.com/lldacing/ComfyUI_BiRefNet_ll.git"
-clone_if_missing "https://github.com/lldacing/ComfyUI_PuLID_Flux_ll.git"
+clone_if_missing "https://github.com/r-vage/ComfyUI_PuLID_Flux_ll.git"
+clone_if_missing "https://github.com/lbouaraba/comfyui-krea2edit.git"
+clone_if_missing "https://github.com/capitan01R/ComfyUI-Krea2T-Enhancer.git"
 clone_if_missing "https://github.com/kijai/ComfyUI-SCAIL-Pose.git"
 
 # Audio & Media
@@ -969,7 +981,7 @@ for node_dir in "$CUSTOM_NODES_DIR"/*; do
         node_name=$(basename "$node_dir")
         echo ""
         echo "→ Installing dependencies for: $node_name"
-        uv pip install --constraint "$CONSTRAINTS_FILE" -r "$node_dir/requirements.txt" || echo "⚠️  Some dependencies for $node_name failed (may be optional)"
+        install_uv_requirements "$node_dir/requirements.txt" --constraint "$CONSTRAINTS_FILE" || echo "⚠️  Some dependencies for $node_name failed (may be optional)"
     fi
 done
 
@@ -1072,7 +1084,12 @@ echo "  [10/10] Enforcing Configured Package Versions"
 echo "═══════════════════════════════════════════════════════════════════"
 echo ""
 echo "Note: Custom nodes may have installed incompatible versions."
-echo "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}, Frontend ${COMFYUI_FRONTEND_VERSION}"
+if $INSTALL_COMFYUI_FRONTEND; then
+    echo "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}, Frontend ${COMFYUI_FRONTEND_VERSION}"
+else
+    echo "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, and Transformers ${TRANSFORMERS_VERSION}"
+    echo "      Leaving the ComfyUI frontend unmanaged"
+fi
 echo ""
 
 # Ensure PyTorch with exact configured version (will upgrade/downgrade if needed)
@@ -1089,10 +1106,14 @@ uv pip install transformers==${TRANSFORMERS_VERSION} || {
     echo "⚠️  Transformers installation failed, continuing anyway..."
 }
 
-# Ensure ComfyUI Frontend with exact configured version
-uv pip install comfyui-frontend-package==${COMFYUI_FRONTEND_VERSION} || {
-    echo "⚠️  ComfyUI frontend installation failed, continuing anyway..."
-}
+# Ensure ComfyUI Frontend with exact configured version when managed
+if $INSTALL_COMFYUI_FRONTEND; then
+    uv pip install comfyui-frontend-package==${COMFYUI_FRONTEND_VERSION} || {
+        echo "⚠️  ComfyUI frontend installation failed, continuing anyway..."
+    }
+else
+    echo "ℹ️  Skipping ComfyUI frontend enforcement (INSTALL_COMFYUI_FRONTEND=false)"
+fi
 
 echo "✓ Package versions enforced successfully"
 
@@ -1121,7 +1142,7 @@ add_bash_aliases() {
     # Show existing ComfyUI-related aliases for context
     if [ -f "$config_file" ]; then
         local existing
-        existing=$(grep -E "^alias (comfy|envact)" "$config_file" 2>/dev/null)
+        existing=$(grep -E "^alias (comfy|envact)" "$config_file" 2>/dev/null || true)
         if [ -n "$existing" ]; then
             echo "  Existing ComfyUI aliases in $config_name:"
             echo "$existing" | while IFS= read -r line; do echo "    $line"; done
@@ -1132,11 +1153,22 @@ add_bash_aliases() {
     # Add launch alias if it doesn't already exist
     if [ -f "$config_file" ] && grep -q "^alias ${COMFYUI_ALIAS}=" "$config_file"; then
         echo "  ✓ Alias '${COMFYUI_ALIAS}' already exists in $config_name — skipping"
+        if ! $INSTALL_COMFYUI_FRONTEND && grep -E "^alias ${COMFYUI_ALIAS}=.*comfyui-frontend-package" "$config_file" >/dev/null 2>&1; then
+            echo "  ⚠️  Existing alias still pins the frontend; remove it and rerun step 11 to regenerate it"
+        fi
+        if [ -n "$COMFYUI_LAUNCH_ARGS" ] && ! grep -E "^alias ${COMFYUI_ALIAS}=" "$config_file" | grep -Fq -- "$COMFYUI_LAUNCH_ARGS"; then
+            echo "  ⚠️  Existing alias may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
+        fi
     else
         {
             echo ""
-            echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
-            echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION && cd $COMFYUI_DIR && python main.py'"
+            if $INSTALL_COMFYUI_FRONTEND; then
+                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
+                echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
+            else
+                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend unmanaged)"
+                echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
+            fi
         } >> "$config_file"
         echo "  ✓ Added alias '${COMFYUI_ALIAS}' to $config_name"
         added=1
@@ -1167,7 +1199,7 @@ add_fish_functions() {
     # Show existing ComfyUI-related functions for context
     if [ -f "$config_file" ]; then
         local existing
-        existing=$(grep -E "^function (comfy|envact)" "$config_file" 2>/dev/null)
+        existing=$(grep -E "^function (comfy|envact)" "$config_file" 2>/dev/null || true)
         if [ -n "$existing" ]; then
             echo "  Existing ComfyUI functions in Fish config:"
             echo "$existing" | while IFS= read -r line; do echo "    $line"; done
@@ -1178,15 +1210,27 @@ add_fish_functions() {
     # Add launch function if it doesn't already exist
     if [ -f "$config_file" ] && grep -q "^function ${COMFYUI_ALIAS}\$" "$config_file"; then
         echo "  ✓ Function '${COMFYUI_ALIAS}' already exists in Fish config — skipping"
+        if ! $INSTALL_COMFYUI_FRONTEND; then
+            echo "  ⚠️  Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
+        fi
+        if [ -n "$COMFYUI_LAUNCH_ARGS" ]; then
+            echo "  ⚠️  Existing function may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
+        fi
     else
         {
             echo ""
-            echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
+            if $INSTALL_COMFYUI_FRONTEND; then
+                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
+            else
+                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend unmanaged)"
+            fi
             echo "function ${COMFYUI_ALIAS}"
             echo "    source $VENV_PATH/bin/activate.fish"
-            echo "    uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
+            if $INSTALL_COMFYUI_FRONTEND; then
+                echo "    uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
+            fi
             echo "    cd $COMFYUI_DIR"
-            echo "    python main.py"
+            echo "    python main.py $COMFYUI_LAUNCH_ARGS \$argv"
             echo "end"
         } >> "$config_file"
         echo "  ✓ Added function '${COMFYUI_ALIAS}' to Fish config"
@@ -1294,25 +1338,24 @@ COMFYUI_DIR="${COMFYUI_DIR:-${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}}"
 
 LAUNCHER_SCRIPT="${COMFYUI_PARENT_DIR}/start_${COMFYUI_ALIAS}.sh"
 
-cat > "$LAUNCHER_SCRIPT" << 'LAUNCHER_EOF'
-#!/bin/bash
-# ComfyUI Launcher Script
-# Auto-generated by install_comfy_env.sh
-
-# Ensure correct frontend version for this installation
-VENV_PATH_PLACEHOLDER/bin/python -m uv pip install -q comfyui-frontend-package==FRONTEND_VERSION_PLACEHOLDER
-
-# Change to ComfyUI directory
-cd "COMFYUI_DIR_PLACEHOLDER"
-
-# Use virtual environment's Python directly (bypasses pyenv shims)
-VENV_PATH_PLACEHOLDER/bin/python main.py "$@"
-LAUNCHER_EOF
-
-# Replace placeholders with actual paths
-sed -i "s|COMFYUI_DIR_PLACEHOLDER|${COMFYUI_DIR}|g" "$LAUNCHER_SCRIPT"
-sed -i "s|VENV_PATH_PLACEHOLDER|${VENV_PATH}|g" "$LAUNCHER_SCRIPT"
-sed -i "s|FRONTEND_VERSION_PLACEHOLDER|${COMFYUI_FRONTEND_VERSION}|g" "$LAUNCHER_SCRIPT"
+{
+    echo "#!/bin/bash"
+    echo "# ComfyUI Launcher Script"
+    echo "# Auto-generated by install_comfy_env.sh"
+    echo ""
+    if $INSTALL_COMFYUI_FRONTEND; then
+        echo "# Ensure correct frontend version for this installation"
+        echo "\"$VENV_PATH/bin/python\" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
+        echo ""
+    else
+        echo "# Frontend package is managed externally"
+    fi
+    echo "# Change to ComfyUI directory"
+    echo "cd \"$COMFYUI_DIR\""
+    echo ""
+    echo "# Use virtual environment's Python directly (bypasses pyenv shims)"
+    echo "\"$VENV_PATH/bin/python\" main.py $COMFYUI_LAUNCH_ARGS \"\$@\""
+} > "$LAUNCHER_SCRIPT"
 
 # Make executable
 chmod +x "$LAUNCHER_SCRIPT"
@@ -1335,6 +1378,12 @@ echo "  Transformers: ${TRANSFORMERS_VERSION}"
 echo ""
 echo "Environment: $VENV_PATH"
 echo "ComfyUI Location: $COMFYUI_DIR"
+echo "Directory Storage:"
+print_directory_state "Models" "$COMFYUI_DIR/models" "$SYMLINK_MODELS"
+print_directory_state "Input" "$COMFYUI_DIR/input" "$SYMLINK_INPUT"
+print_directory_state "Output" "$COMFYUI_DIR/output" "$SYMLINK_OUTPUT"
+print_directory_state "User Data" "$COMFYUI_DIR/user" "$SYMLINK_USER"
+print_directory_state "Custom Nodes" "$COMFYUI_DIR/custom_nodes" "$SYMLINK_CUSTOM_NODES"
 if [ -n "$CONFIGURED_SHELLS" ]; then
     echo "Shell Config(s): $CONFIGURED_SHELLS"
 fi
@@ -1356,7 +1405,7 @@ if grep -q "alias ${COMFYUI_ALIAS}=" "$HOME/.bashrc" 2>/dev/null || \
 else
     echo "  Option 2 - Manual activation:"
 fi
-echo "    source $VENV_PATH/bin/activate && cd $COMFYUI_DIR && python main.py"
+echo "    source $VENV_PATH/bin/activate && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS"
 echo ""
 echo "Press any key to exit..."
 read -n 1 -s

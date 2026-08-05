@@ -36,19 +36,24 @@ $PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/cu128"  # PyTorch index U
 # Critical package versions (enforced at end to override custom node dependencies)
 $NUMPY_VERSION = "2.2.6"                      # NumPy version (2.2.x compatible with PyTorch 2.9+)
 $TRANSFORMERS_VERSION = "4.57.3"              # Transformers version
-$COMFYUI_FRONTEND_VERSION = "1.44.19"         # Default ComfyUI frontend version (overridden by interactive prompt)
+$COMFYUI_FRONTEND_VERSION = "1.45.21"         # Default ComfyUI frontend version (overridden by interactive prompt)
 
 # ComfyUI installation defaults (overridden by interactive prompts below)
-$DEFAULT_COMFYUI_VERSION = "0.23.0"            # Default ComfyUI version (numeric, e.g., 0.18.0)
+$DEFAULT_COMFYUI_VERSION = "0.28.0"            # Default ComfyUI version (numeric, e.g., 0.28.0)
 $DEFAULT_FRONTEND_VERSION = $COMFYUI_FRONTEND_VERSION  # Default frontend version
-$DEFAULT_ALIAS = "comfyui"                     # Default launcher alias/batch name (e.g., comfyui, comfy2, comfy3)
+$DEFAULT_ALIAS = "comfy"                       # Alias base; auto-increments when the prompt is left empty
+$COMFYUI_LAUNCH_ARGS = "--disable-pinned-memory"  # Arguments appended to python main.py
 
-# Symlink/Junction configuration for models, input, output, user, and custom_nodes
-$CREATE_SYMLINKS = $true                      # Set to $false to skip all symlink/junction creation
-$SYMLINK_CUSTOM_NODES = $true                 # Set to $false to keep custom_nodes as a regular directory
+# Shared-directory configuration (set individual paths to $false to keep them local)
+$SYMLINK_MODELS = $true                       # Share models across ComfyUI installations
+$SYMLINK_INPUT = $true                        # Share input across ComfyUI installations
+$SYMLINK_OUTPUT = $true                       # Share output across ComfyUI installations
+$SYMLINK_USER = $true                         # Share user settings, workflows, and templates
+$SYMLINK_CUSTOM_NODES = $true                 # Share custom_nodes across ComfyUI installations
 
 # Optional features
-$INSTALL_NUNCHAKU = $true                     # Set to $false to skip Nunchaku (NVIDIA GPU required)
+$INSTALL_NUNCHAKU = $false                    # Set to $false to skip Nunchaku (NVIDIA GPU required)
+$INSTALL_COMFYUI_FRONTEND = $true             # Set to $false to preserve a custom/existing frontend package
 
 # ============================================
 # Derived Paths (auto-generated from BASE_PATH)
@@ -72,7 +77,7 @@ $INSTALL_NUNCHAKU = $true                     # Set to $false to skip Nunchaku (
 #   $USER_CUSTOM_NODES_PATH = "E:\shared_custom_nodes"
 #
 # The script will create the directories if they don't exist and create
-# junctions into the ComfyUI tree (when $CREATE_SYMLINKS = $true).
+# junctions into the ComfyUI tree when their corresponding $SYMLINK_* setting is $true.
 # ============================================
 $VENV_PATH = "$BASE_PATH\comfy_env"           # Virtual environment location
 $COMFYUI_PARENT_DIR = $BASE_PATH              # Parent directory where ComfyUI will be cloned
@@ -115,6 +120,40 @@ function Test-CommandExists {
     $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
+function Test-ComfyAliasNameExists {
+    param([string]$Candidate)
+
+    if ((Test-Path (Join-Path $COMFYUI_PARENT_DIR "$Candidate.bat")) -or
+        (Test-Path (Join-Path $COMFYUI_PARENT_DIR "$Candidate.ps1"))) {
+        return $true
+    }
+
+    $escapedCandidate = [regex]::Escape($Candidate)
+    $profilePaths = @($PROFILE.CurrentUserAllHosts, $PROFILE) | Where-Object { $_ } | Select-Object -Unique
+    foreach ($profilePath in $profilePaths) {
+        if (Test-Path $profilePath) {
+            $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+            if ($profileContent -match "(?m)^\s*function\s+$escapedCandidate(?:\s|\{)") {
+                return $true
+            }
+        }
+    }
+
+    return $false
+}
+
+function Get-NextComfyAliasName {
+    $candidate = $DEFAULT_ALIAS
+    $suffix = 1
+
+    while (Test-ComfyAliasNameExists -Candidate $candidate) {
+        $candidate = "$DEFAULT_ALIAS$suffix"
+        $suffix++
+    }
+
+    return $candidate
+}
+
 function Invoke-SafeCommand {
     # Run a command and return $true/$false instead of throwing on failure
     param(
@@ -143,39 +182,156 @@ function Invoke-SafeCommand {
     }
 }
 
+function Install-UvRequirements {
+    param(
+        [string]$RequirementsFile,
+        [string]$ConstraintFile
+    )
+
+    $installRequirements = $RequirementsFile
+    $filteredRequirements = $null
+    try {
+        if (-not $INSTALL_COMFYUI_FRONTEND) {
+            $filteredRequirements = [System.IO.Path]::GetTempFileName()
+            $filteredLines = @(
+                Get-Content $RequirementsFile | Where-Object {
+                    $_ -notmatch '^\s*comfyui[-_.]frontend[-_.]package(?:[^A-Za-z0-9_-].*)?$'
+                }
+            )
+            [System.IO.File]::WriteAllLines($filteredRequirements, [string[]]$filteredLines)
+            $installRequirements = $filteredRequirements
+        }
+
+        if ([string]::IsNullOrWhiteSpace($ConstraintFile)) {
+            uv pip install -r $installRequirements
+        } else {
+            uv pip install --constraint $ConstraintFile -r $installRequirements
+        }
+    }
+    finally {
+        if ($filteredRequirements -and (Test-Path $filteredRequirements)) {
+            Remove-Item $filteredRequirements -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function New-DirectoryJunction {
-    # Create a directory junction (works without admin rights, unlike symlinks)
+    # Create a directory junction after the caller has safely cleared the link path.
     param(
         [string]$Link,
         [string]$Target
     )
 
     if (Test-Path $Link) {
-        $item = Get-Item $Link -Force
-        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-            # Already a junction/symlink - check target
-            $currentTarget = (Get-Item $Link).Target
-            if ($currentTarget -eq $Target) {
-                Write-Success "$($item.Name) is already a junction to correct location"
-                return
-            }
-            else {
-                Write-Warn "$($item.Name) junction points to wrong location:"
-                Write-Host "   Current:  $currentTarget"
-                Write-Host "   Expected: $Target"
-                Write-Host "   Removing old junction and creating correct one..."
-                [System.IO.Directory]::Delete($Link)
-            }
-        }
-        elseif ($item.PSIsContainer) {
-            Write-Warn "Removing existing directory at $Link"
-            Remove-Item $Link -Recurse -Force
-        }
+        throw "Cannot create junction because the path still exists: $Link"
     }
 
     # Use cmd /c mklink /J for junctions (no admin required)
     cmd /c mklink /J "`"$Link`"" "`"$Target`"" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create junction: $Link -> $Target"
+    }
     Write-Success "Created junction: $Link -> $Target"
+}
+
+function Set-ComfyDirectorySharing {
+    param(
+        [string]$Name,
+        [string]$LocalPath,
+        [string]$SharedPath,
+        [bool]$Enabled
+    )
+
+    if (-not $Enabled) {
+        if (Test-Path $LocalPath) {
+            $item = Get-Item $LocalPath -Force
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                Write-Warn "$Name sharing is disabled, but the existing junction is preserved: $LocalPath -> $($item.Target)"
+                Write-Host "   Remove the junction manually if you want this installation to use a local directory."
+            }
+            elseif ($item.PSIsContainer) {
+                Write-Success "$Name uses local directory $LocalPath"
+            }
+            else {
+                Write-Warn "$Name cannot use a local directory because a non-directory path exists at $LocalPath"
+            }
+        }
+        else {
+            New-Item -ItemType Directory -Path $LocalPath -Force | Out-Null
+            Write-Success "$Name created local directory $LocalPath"
+        }
+        return
+    }
+
+    if (-not (Test-Path $SharedPath)) {
+        New-Item -ItemType Directory -Path $SharedPath -Force | Out-Null
+    }
+
+    if (Test-Path $LocalPath) {
+        $item = Get-Item $LocalPath -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            $currentTarget = $item.Target
+            if ($currentTarget -eq $SharedPath) {
+                Write-Success "$Name is already shared at $SharedPath"
+            }
+            else {
+                Write-Warn "$Name junction points to $currentTarget; relinking to $SharedPath"
+                [System.IO.Directory]::Delete($LocalPath)
+                New-DirectoryJunction -Link $LocalPath -Target $SharedPath
+            }
+            return
+        }
+
+        if (-not $item.PSIsContainer) {
+            Write-Warn "$Name cannot be shared because a non-directory path exists at $LocalPath"
+            return
+        }
+
+        $localItems = @(Get-ChildItem $LocalPath -Force -ErrorAction SilentlyContinue)
+        $sharedItems = @(Get-ChildItem $SharedPath -Force -ErrorAction SilentlyContinue)
+        if ($localItems.Count -eq 0) {
+            [System.IO.Directory]::Delete($LocalPath)
+        }
+        elseif ($sharedItems.Count -eq 0) {
+            Write-Step "$Name copying existing local data to $SharedPath"
+            try {
+                Copy-Item (Join-Path $LocalPath "*") $SharedPath -Recurse -Force -ErrorAction Stop
+                Remove-Item $LocalPath -Recurse -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Warn "$Name copy failed; preserving the local directory and skipping the junction"
+                return
+            }
+        }
+        else {
+            Write-Warn "$Name local and shared directories both contain data; preserving both and skipping the junction"
+            Write-Host "   Merge them manually, then rerun the installer."
+            return
+        }
+    }
+
+    New-DirectoryJunction -Link $LocalPath -Target $SharedPath
+}
+
+function Write-ComfyDirectoryState {
+    param(
+        [string]$Name,
+        [string]$Path,
+        [bool]$Enabled
+    )
+
+    if (Test-Path $Path) {
+        $item = Get-Item $Path -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            if ($Enabled) {
+                Write-Host "  ${Name}: Shared ($($item.Target))"
+            } else {
+                Write-Host "  ${Name}: Existing junction preserved ($($item.Target))"
+            }
+            return
+        }
+    }
+    Write-Host "  ${Name}: Local ($Path)"
 }
 
 function Copy-IfMissing {
@@ -218,11 +374,16 @@ Write-Host ""
 $INPUT_COMFYUI_VERSION = Read-Host "  ComfyUI version [$DEFAULT_COMFYUI_VERSION]"
 if ([string]::IsNullOrWhiteSpace($INPUT_COMFYUI_VERSION)) { $INPUT_COMFYUI_VERSION = $DEFAULT_COMFYUI_VERSION }
 
-$INPUT_FRONTEND_VERSION = Read-Host "  Frontend version [$DEFAULT_FRONTEND_VERSION]"
-if ([string]::IsNullOrWhiteSpace($INPUT_FRONTEND_VERSION)) { $INPUT_FRONTEND_VERSION = $DEFAULT_FRONTEND_VERSION }
+if ($INSTALL_COMFYUI_FRONTEND) {
+    $INPUT_FRONTEND_VERSION = Read-Host "  Frontend version [$DEFAULT_FRONTEND_VERSION]"
+    if ([string]::IsNullOrWhiteSpace($INPUT_FRONTEND_VERSION)) { $INPUT_FRONTEND_VERSION = $DEFAULT_FRONTEND_VERSION }
+} else {
+    $INPUT_FRONTEND_VERSION = ""
+}
 
-$INPUT_ALIAS = Read-Host "  Launcher name [$DEFAULT_ALIAS]"
-if ([string]::IsNullOrWhiteSpace($INPUT_ALIAS)) { $INPUT_ALIAS = $DEFAULT_ALIAS }
+$SUGGESTED_ALIAS = Get-NextComfyAliasName
+$INPUT_ALIAS = Read-Host "  Launcher name [$SUGGESTED_ALIAS]"
+if ([string]::IsNullOrWhiteSpace($INPUT_ALIAS)) { $INPUT_ALIAS = $SUGGESTED_ALIAS }
 
 Write-Host ""
 
@@ -231,6 +392,22 @@ $COMFYUI_VERSION = "v$INPUT_COMFYUI_VERSION"                               # e.g
 $COMFYUI_DIR_NAME = "ComfyUI_$INPUT_COMFYUI_VERSION"                          # e.g., ComfyUI_0.18.2 (full version)
 $COMFYUI_FRONTEND_VERSION = $INPUT_FRONTEND_VERSION                         # e.g., 1.41.21
 $COMFYUI_ALIAS = $INPUT_ALIAS                                              # e.g., comfyui or comfy2
+
+# Exclude the official frontend package from every uv resolution when the user
+# manages a custom frontend. This also covers ComfyUI/custom-node requirements.
+$FRONTEND_EXCLUDE_FILE = $null
+$ORIGINAL_UV_EXCLUDE = [Environment]::GetEnvironmentVariable("UV_EXCLUDE", "Process")
+if (-not $INSTALL_COMFYUI_FRONTEND) {
+    $FRONTEND_EXCLUDE_FILE = [System.IO.Path]::GetTempFileName()
+    "comfyui-frontend-package" | Set-Content $FRONTEND_EXCLUDE_FILE -Encoding ASCII
+    if ([string]::IsNullOrWhiteSpace($ORIGINAL_UV_EXCLUDE)) {
+        $env:UV_EXCLUDE = $FRONTEND_EXCLUDE_FILE
+    } else {
+        $env:UV_EXCLUDE = "$ORIGINAL_UV_EXCLUDE $FRONTEND_EXCLUDE_FILE"
+    }
+}
+
+try {
 
 # ============================================
 # Configuration Summary
@@ -242,7 +419,11 @@ if ($COMFYUI_VERSION) {
 } else {
     Write-Host "  ComfyUI Version: Latest (default branch)"
 }
-Write-Host "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
+if ($INSTALL_COMFYUI_FRONTEND) {
+    Write-Host "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
+} else {
+    Write-Host "  ComfyUI Frontend: Unmanaged (preserving custom/existing package)"
+}
 Write-Host "  Python Version: $PYTHON_VERSION"
 Write-Host "  PyTorch Version: $PYTORCH_FULL_VERSION (torchvision/torchaudio auto-selected)"
 Write-Host "  NumPy Version: $NUMPY_VERSION"
@@ -258,22 +439,14 @@ Write-Host "  Base Path: $BASE_PATH"
 Write-Host "  ComfyUI Location: $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME"
 Write-Host "  Virtual Env: $VENV_PATH"
 Write-Host "  Launcher: $COMFYUI_ALIAS (batch file + PS alias)"
+Write-Host "  Launch Arguments: $(if ([string]::IsNullOrWhiteSpace($COMFYUI_LAUNCH_ARGS)) { "None" } else { $COMFYUI_LAUNCH_ARGS })"
 Write-Host ""
-Write-Host "  Junction/Symlink Configuration:"
-if ($CREATE_SYMLINKS) {
-    Write-Host "  Junctions: Enabled"
-    Write-Host "    Models:       $USER_MODELS_PATH -> $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME\models"
-    Write-Host "    Input:        $USER_INPUT_PATH -> $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME\input"
-    Write-Host "    Output:       $USER_OUTPUT_PATH -> $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME\output"
-    Write-Host "    User Data:    $USER_USERDATA_PATH -> $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME\user"
-    if ($SYMLINK_CUSTOM_NODES) {
-        Write-Host "    Custom Nodes: $USER_CUSTOM_NODES_PATH -> $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME\custom_nodes"
-    } else {
-        Write-Host "    Custom Nodes: Regular directory (no junction)"
-    }
-} else {
-    Write-Host "  Junctions: Disabled"
-}
+Write-Host "  Directory Sharing:"
+Write-Host "    Models:       $(if ($SYMLINK_MODELS) { "Shared ($USER_MODELS_PATH)" } else { "Local" })"
+Write-Host "    Input:        $(if ($SYMLINK_INPUT) { "Shared ($USER_INPUT_PATH)" } else { "Local" })"
+Write-Host "    Output:       $(if ($SYMLINK_OUTPUT) { "Shared ($USER_OUTPUT_PATH)" } else { "Local" })"
+Write-Host "    User Data:    $(if ($SYMLINK_USER) { "Shared ($USER_USERDATA_PATH)" } else { "Local" })"
+Write-Host "    Custom Nodes: $(if ($SYMLINK_CUSTOM_NODES) { "Shared ($USER_CUSTOM_NODES_PATH)" } else { "Local" })"
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -670,83 +843,24 @@ numpy>=$NUMPY_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
 
     Write-Host "   Using constraints to prevent torch/numpy downgrade"
-    uv pip install --constraint $CONSTRAINTS_FILE -r requirements.txt
+    Install-UvRequirements -RequirementsFile "requirements.txt" -ConstraintFile $CONSTRAINTS_FILE
     Remove-Item $CONSTRAINTS_FILE -Force -ErrorAction SilentlyContinue
     Pop-Location
 }
 
 # ============================================================================
-# Create Junctions for Models, Output, and Custom Nodes
+# Configure Shared/Local ComfyUI Directories
 # ============================================================================
-if ($CREATE_SYMLINKS) {
 
-    Write-Header "Creating Junctions for Models, Input, Output, User Data, and Custom Nodes"
+Write-Header "Configuring Shared and Local Directories"
 
-    $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
+$COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
 
-    # Create user directories if they don't exist
-    foreach ($dir in @($USER_MODELS_PATH, $USER_INPUT_PATH, $USER_OUTPUT_PATH, $USER_USERDATA_PATH, $USER_CUSTOM_NODES_PATH)) {
-        if (-not (Test-Path $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            Write-Success "Created directory: $dir"
-        }
-    }
-
-    # Handle models directory
-    New-DirectoryJunction -Link (Join-Path $COMFYUI_DIR "models") -Target $USER_MODELS_PATH
-
-    # Handle output directory
-    New-DirectoryJunction -Link (Join-Path $COMFYUI_DIR "output") -Target $USER_OUTPUT_PATH
-
-    # Handle input directory — preserve existing contents on first migration
-    $inDir = Join-Path $COMFYUI_DIR "input"
-    if ((Test-Path $inDir) -and -not ((Get-Item $inDir -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-        $centralInputItems = Get-ChildItem $USER_INPUT_PATH -ErrorAction SilentlyContinue
-        if (-not $centralInputItems -or $centralInputItems.Count -eq 0) {
-            Write-Step "Copying existing input contents to centralized location..."
-            Copy-Item "$inDir\*" $USER_INPUT_PATH -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-    New-DirectoryJunction -Link $inDir -Target $USER_INPUT_PATH
-
-    # Handle user directory (settings, workflows, templates) — preserve existing on first migration.
-    # Cross-version safe: comfy.settings.json is merged against frontend defaults at runtime.
-    $userDir = Join-Path $COMFYUI_DIR "user"
-    if ((Test-Path $userDir) -and -not ((Get-Item $userDir -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-        $centralUserItems = Get-ChildItem $USER_USERDATA_PATH -ErrorAction SilentlyContinue
-        if (-not $centralUserItems -or $centralUserItems.Count -eq 0) {
-            Write-Step "Copying existing user data to centralized location..."
-            Copy-Item "$userDir\*" $USER_USERDATA_PATH -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-    New-DirectoryJunction -Link $userDir -Target $USER_USERDATA_PATH
-
-    # Handle custom_nodes directory
-    if ($SYMLINK_CUSTOM_NODES) {
-        # If custom_nodes exists as a real directory, move contents first
-        $cnDir = Join-Path $COMFYUI_DIR "custom_nodes"
-        if ((Test-Path $cnDir) -and -not ((Get-Item $cnDir -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-            # Check if centralized directory is empty
-            $centralItems = Get-ChildItem $USER_CUSTOM_NODES_PATH -ErrorAction SilentlyContinue
-            if (-not $centralItems -or $centralItems.Count -eq 0) {
-                Write-Step "Copying existing custom_nodes to centralized location..."
-                Copy-Item "$cnDir\*" $USER_CUSTOM_NODES_PATH -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-        New-DirectoryJunction -Link $cnDir -Target $USER_CUSTOM_NODES_PATH
-    }
-    else {
-        Write-Host "   Skipping custom_nodes junction (SYMLINK_CUSTOM_NODES = `$false)"
-        $cnDir = Join-Path $COMFYUI_DIR "custom_nodes"
-        if (-not (Test-Path $cnDir)) {
-            New-Item -ItemType Directory -Path $cnDir -Force | Out-Null
-            Write-Success "Created regular custom_nodes directory"
-        }
-        else {
-            Write-Success "Using existing custom_nodes directory"
-        }
-    }
-}
+Set-ComfyDirectorySharing -Name "Models" -LocalPath (Join-Path $COMFYUI_DIR "models") -SharedPath $USER_MODELS_PATH -Enabled $SYMLINK_MODELS
+Set-ComfyDirectorySharing -Name "Input" -LocalPath (Join-Path $COMFYUI_DIR "input") -SharedPath $USER_INPUT_PATH -Enabled $SYMLINK_INPUT
+Set-ComfyDirectorySharing -Name "Output" -LocalPath (Join-Path $COMFYUI_DIR "output") -SharedPath $USER_OUTPUT_PATH -Enabled $SYMLINK_OUTPUT
+Set-ComfyDirectorySharing -Name "User Data" -LocalPath (Join-Path $COMFYUI_DIR "user") -SharedPath $USER_USERDATA_PATH -Enabled $SYMLINK_USER
+Set-ComfyDirectorySharing -Name "Custom Nodes" -LocalPath (Join-Path $COMFYUI_DIR "custom_nodes") -SharedPath $USER_CUSTOM_NODES_PATH -Enabled $SYMLINK_CUSTOM_NODES
 
 # ============================================================================
 # [6/11] Clone Custom Nodes
@@ -779,13 +893,13 @@ if ($Steps[6]) {
     Copy-IfMissing "https://github.com/MinorBoy/ComfyUI_essentials_mb.git"
     Copy-IfMissing "https://github.com/chrisgoringe/cg-image-filter.git"
     Copy-IfMissing "https://github.com/ashtar1984/comfyui-find-perfect-resolution"
+    Copy-IfMissing "https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI"
     Copy-IfMissing "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes"
     Copy-IfMissing "https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI"
 
     # Model Support & Optimization
     Write-Host ""
     Write-Host "Cloning model support & optimization..." -ForegroundColor White
-    Copy-IfMissing "https://github.com/city96/ComfyUI-GGUF.git"
     Copy-IfMissing "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
     Copy-IfMissing "https://github.com/lldacing/ComfyUI_Patches_ll.git"
 
@@ -815,14 +929,18 @@ if ($Steps[6]) {
     Copy-IfMissing "https://github.com/Jonseed/ComfyUI-Detail-Daemon.git"
     Copy-IfMissing "https://github.com/kijai/ComfyUI-KJNodes.git"
     Copy-IfMissing "https://github.com/ssitu/ComfyUI_UltimateSDUpscale.git"
+    Copy-IfMissing "https://github.com/SeanBRVFX/ComfyUI-CorridorKey"
+    Copy-IfMissing "https://github.com/filliptm/ComfyUI_Fill-Nodes.git"
+    Copy-IfMissing "https://github.com/shiimizu/ComfyUI-TiledDiffusion"
 
     # Specialized Models
     Write-Host ""
     Write-Host "Cloning specialized models..." -ForegroundColor White
-    Copy-IfMissing "https://github.com/kijai/ComfyUI-Florence2.git"
     Copy-IfMissing "https://github.com/kijai/ComfyUI-SUPIR.git"
     Copy-IfMissing "https://github.com/lldacing/ComfyUI_BiRefNet_ll.git"
-    Copy-IfMissing "https://github.com/lldacing/ComfyUI_PuLID_Flux_ll.git"
+    Copy-IfMissing "https://github.com/r-vage/ComfyUI_PuLID_Flux_ll.git"
+    Copy-IfMissing "https://github.com/lbouaraba/comfyui-krea2edit.git"
+    Copy-IfMissing "https://github.com/capitan01R/ComfyUI-Krea2T-Enhancer.git"
     Copy-IfMissing "https://github.com/kijai/ComfyUI-SCAIL-Pose.git"
     
     # Audio & Media
@@ -876,7 +994,7 @@ numba>=0.58.0
         if (Test-Path $reqFile) {
             Write-Host ""
             Invoke-SafeCommand "Installing dependencies for: $($nodeDir.Name)" {
-                uv pip install --constraint $CONSTRAINTS_FILE -r $reqFile
+                Install-UvRequirements -RequirementsFile $reqFile -ConstraintFile $CONSTRAINTS_FILE
             } -Optional
         }
     }
@@ -985,7 +1103,12 @@ if ($Steps[10]) {
     Write-Header "[10/11] Enforcing Configured Package Versions"
 
     Write-Host "Note: Custom nodes may have installed incompatible versions."
-    Write-Host "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}, Frontend ${COMFYUI_FRONTEND_VERSION}"
+    if ($INSTALL_COMFYUI_FRONTEND) {
+        Write-Host "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}, Frontend ${COMFYUI_FRONTEND_VERSION}"
+    } else {
+        Write-Host "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, and Transformers ${TRANSFORMERS_VERSION}"
+        Write-Host "      Leaving the ComfyUI frontend unmanaged"
+    }
     Write-Host ""
 
     # Ensure PyTorch
@@ -1003,10 +1126,14 @@ if ($Steps[10]) {
         uv pip install "transformers==$TRANSFORMERS_VERSION"
     } -Optional
 
-    # Ensure ComfyUI Frontend
-    Invoke-SafeCommand "Enforcing ComfyUI Frontend $COMFYUI_FRONTEND_VERSION" {
-        uv pip install "comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
-    } -Optional
+    # Ensure ComfyUI Frontend when managed
+    if ($INSTALL_COMFYUI_FRONTEND) {
+        Invoke-SafeCommand "Enforcing ComfyUI Frontend $COMFYUI_FRONTEND_VERSION" {
+            uv pip install "comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
+        } -Optional
+    } else {
+        Write-Host "   Skipping ComfyUI frontend enforcement (INSTALL_COMFYUI_FRONTEND = `$false)"
+    }
 
     Write-Success "Package versions enforced successfully"
 }
@@ -1022,34 +1149,48 @@ if ($Steps[11]) {
 
     # --- Create per-version .bat launcher (named after alias, e.g., comfyui.bat, comfy2.bat) ---
     $launcherBat = Join-Path $COMFYUI_PARENT_DIR "$COMFYUI_ALIAS.bat"
-    @"
-@echo off
-REM ComfyUI Launcher: $COMFYUI_ALIAS -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)
-REM Auto-generated by install_comfy_env.ps1
-
+    $frontendBatSetup = if ($INSTALL_COMFYUI_FRONTEND) {
+@"
 echo Ensuring frontend version $COMFYUI_FRONTEND_VERSION...
 "$VENV_PATH\Scripts\python.exe" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION
 
+"@
+    } else {
+        "REM Frontend package is managed externally`r`n"
+    }
+    @"
+@echo off
+REM ComfyUI Launcher: $COMFYUI_ALIAS -> $COMFYUI_DIR
+REM Auto-generated by install_comfy_env.ps1
+
+$frontendBatSetup
 echo Starting ComfyUI...
 cd /d "$COMFYUI_DIR"
-"$VENV_PATH\Scripts\python.exe" main.py %*
+"$VENV_PATH\Scripts\python.exe" main.py $COMFYUI_LAUNCH_ARGS %*
 pause
 "@ | Set-Content $launcherBat -Encoding ASCII
     Write-Success "Created launcher: $launcherBat"
 
     # --- Create per-version .ps1 launcher ---
     $launcherPs1 = Join-Path $COMFYUI_PARENT_DIR "$COMFYUI_ALIAS.ps1"
-    @"
-# ComfyUI Launcher: $COMFYUI_ALIAS -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)
-# Auto-generated by install_comfy_env.ps1
-
+    $frontendPsSetup = if ($INSTALL_COMFYUI_FRONTEND) {
+@"
 Write-Host 'Ensuring frontend version $COMFYUI_FRONTEND_VERSION...' -ForegroundColor DarkGray
 & "$VENV_PATH\Scripts\python.exe" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION
 
+"@
+    } else {
+        "# Frontend package is managed externally`r`n"
+    }
+    @"
+# ComfyUI Launcher: $COMFYUI_ALIAS -> $COMFYUI_DIR
+# Auto-generated by install_comfy_env.ps1
+
+$frontendPsSetup
 Write-Host 'Starting ComfyUI...' -ForegroundColor Cyan
 & "$VENV_PATH\Scripts\Activate.ps1"
 Set-Location "$COMFYUI_DIR"
-python main.py @args
+python main.py $COMFYUI_LAUNCH_ARGS @args
 "@ | Set-Content $launcherPs1 -Encoding UTF8
     Write-Success "Created launcher: $launcherPs1"
 
@@ -1103,15 +1244,25 @@ call "$VENV_PATH\Scripts\activate.bat"
     # Add launch function if it doesn't already exist
     if ($profileContent -match "function $COMFYUI_ALIAS\b") {
         Write-Success "Function '$COMFYUI_ALIAS' already exists in profile - skipping"
+        if (-not $INSTALL_COMFYUI_FRONTEND) {
+            Write-Warn "Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($COMFYUI_LAUNCH_ARGS)) {
+            Write-Warn "Existing function may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
+        }
     } else {
+        $frontendFunctionSetup = if ($INSTALL_COMFYUI_FRONTEND) {
+            "    & `"$VENV_PATH\Scripts\python.exe`" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION`r`n"
+        } else {
+            ""
+        }
         $funcBlock = @"
 
-# ComfyUI: $COMFYUI_ALIAS -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)
+# ComfyUI: $COMFYUI_ALIAS -> $COMFYUI_DIR
 function $COMFYUI_ALIAS {
-    & "$VENV_PATH\Scripts\python.exe" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION
-    & "$VENV_PATH\Scripts\Activate.ps1"
+$frontendFunctionSetup    & "$VENV_PATH\Scripts\Activate.ps1"
     Set-Location "$COMFYUI_DIR"
-    python main.py @args
+    python main.py $COMFYUI_LAUNCH_ARGS @args
 }
 "@
         Add-Content $profilePath $funcBlock -Encoding UTF8
@@ -1142,7 +1293,11 @@ function envact {
     Write-Host ""
     Write-Host ("=" * 67) -ForegroundColor Cyan
     Write-Host "Launcher and alias configuration complete!" -ForegroundColor Cyan
-    Write-Host "  - $COMFYUI_ALIAS : activate environment, pin frontend, launch ComfyUI"
+    if ($INSTALL_COMFYUI_FRONTEND) {
+        Write-Host "  - $COMFYUI_ALIAS : activate environment, pin frontend, launch ComfyUI"
+    } else {
+        Write-Host "  - $COMFYUI_ALIAS : activate environment and launch ComfyUI (frontend unmanaged)"
+    }
     Write-Host "  - envact  : activate environment only"
     Write-Host ""
     Write-Host "  Batch files:"
@@ -1172,6 +1327,12 @@ Write-Host "  Transformers: $TRANSFORMERS_VERSION"
 Write-Host ""
 Write-Host "Environment: $VENV_PATH"
 Write-Host "ComfyUI Location: $COMFYUI_DIR"
+Write-Host "Directory Storage:"
+Write-ComfyDirectoryState -Name "Models" -Path (Join-Path $COMFYUI_DIR "models") -Enabled $SYMLINK_MODELS
+Write-ComfyDirectoryState -Name "Input" -Path (Join-Path $COMFYUI_DIR "input") -Enabled $SYMLINK_INPUT
+Write-ComfyDirectoryState -Name "Output" -Path (Join-Path $COMFYUI_DIR "output") -Enabled $SYMLINK_OUTPUT
+Write-ComfyDirectoryState -Name "User Data" -Path (Join-Path $COMFYUI_DIR "user") -Enabled $SYMLINK_USER
+Write-ComfyDirectoryState -Name "Custom Nodes" -Path (Join-Path $COMFYUI_DIR "custom_nodes") -Enabled $SYMLINK_CUSTOM_NODES
 Write-Host ""
 Write-Host "To start ComfyUI:"
 Write-Host ""
@@ -1190,7 +1351,11 @@ if (Test-Path $PROFILE) {
     $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
     if ($profileContent -and $profileContent -match "function $COMFYUI_ALIAS\b") {
         Write-Host "  Option 3 - PowerShell alias (after reloading profile):" -ForegroundColor White
-        Write-Host "    $COMFYUI_ALIAS          # Pin frontend + launch ComfyUI"
+        if ($INSTALL_COMFYUI_FRONTEND) {
+            Write-Host "    $COMFYUI_ALIAS          # Pin frontend + launch ComfyUI"
+        } else {
+            Write-Host "    $COMFYUI_ALIAS          # Launch ComfyUI (frontend unmanaged)"
+        }
         Write-Host "    envact           # Activate env only"
         Write-Host ""
         Write-Host "  Option 4 - Manual activation:" -ForegroundColor White
@@ -1202,7 +1367,18 @@ if (Test-Path $PROFILE) {
 else {
     Write-Host "  Option 3 - Manual activation:" -ForegroundColor White
 }
-Write-Host "    & `"$VENV_PATH\Scripts\Activate.ps1`"; cd `"$COMFYUI_DIR`"; python main.py"
+Write-Host "    & `"$VENV_PATH\Scripts\Activate.ps1`"; cd `"$COMFYUI_DIR`"; python main.py $COMFYUI_LAUNCH_ARGS"
 Write-Host ""
 
 Read-Host "Press Enter to exit"
+}
+finally {
+    if ($null -eq $ORIGINAL_UV_EXCLUDE) {
+        Remove-Item Env:UV_EXCLUDE -ErrorAction SilentlyContinue
+    } else {
+        $env:UV_EXCLUDE = $ORIGINAL_UV_EXCLUDE
+    }
+    if ($FRONTEND_EXCLUDE_FILE -and (Test-Path $FRONTEND_EXCLUDE_FILE)) {
+        Remove-Item $FRONTEND_EXCLUDE_FILE -Force -ErrorAction SilentlyContinue
+    }
+}

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-06
+
+### Added
+- Optional frontend management through `INSTALL_COMFYUI_FRONTEND` on Linux and Windows
+- Independent sharing controls for `models`, `input`, `output`, `user`, and `custom_nodes`
+- Actual shared/local directory state in the installation summary
+- Configurable `COMFYUI_LAUNCH_ARGS`, applied to every generated alias and launcher
+- Automatic default alias selection (`comfy`, `comfy1`, `comfy2`, ...) when the alias prompt is left empty
+- New custom nodes: `comfyui-krea2edit`, `ComfyUI-Krea2T-Enhancer`, `ComfyUI-CorridorKey`, `ComfyUI_Fill-Nodes`, `ComfyUI-TiledDiffusion`, and `WhatDreamsCost-ComfyUI`
+
+### Changed
+- Default ComfyUI version: `0.23.0` → `0.28.0` (Linux + Windows)
+- Default frontend version: `1.44.19` → `1.45.21` (Linux + Windows)
+- Frontend management can be disabled without ComfyUI or custom-node requirements reinstalling `comfyui-frontend-package`
+- Directory migration now copies populated local data only into an empty shared target and preserves both locations when they conflict
+- Existing links are preserved with a warning when sharing is disabled
+- `ComfyUI_PuLID_Flux_ll` now clones from the `r-vage` fork
+- Custom-node documentation and repository links synchronized with the shared `custom_nodes` installation
+
+### Removed
+- Global `CREATE_SYMLINKS` switch, replaced by the five independent `SYMLINK_*` settings
+- Standalone `ComfyUI-GGUF` and `ComfyUI-Florence2` clones, because Eclipse supplies them through its external-node integration
+
+### Fixed
+- Prevented populated local model, input, output, user, or custom-node directories from being silently removed during sharing setup
+- Generated aliases and launchers no longer overwrite a custom frontend when frontend management is disabled
+- Linux alias setup no longer exits early when a shell configuration contains no existing ComfyUI aliases
+
+**Changed files:** `install_comfy_env.sh`, `install_comfy_env_win.ps1`, `README.md`, `CHANGELOG.md`, `pyproject.toml`
+
+---
+
 ## [0.11.3] - 2026-06-03
 
 ### Added
