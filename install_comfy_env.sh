@@ -22,9 +22,39 @@ PYTHON_VERSION="3.12.10"            # Python version to install via pyenv
 PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"  # pyenv installation directory
 
 # PyTorch version configuration
-PYTORCH_VERSION="2.9"               # PyTorch major.minor version for wheel URLs (e.g., 2.9, 2.10)
-PYTORCH_FULL_VERSION="2.9.1+cu128"  # Full PyTorch version for package installation (e.g., 2.9.1+cu128, 2.10.0+cpu)
-PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"  # PyTorch index URL (cu128, cu121, cpu)
+PYTORCH_VERSION="2.9.1"             # Base PyTorch version
+PYTORCH_WHEEL_VARIANT="cu128"       # Wheel variant (cu126, cu128, cu130, rocm7.1, cpu)
+
+case "$PYTORCH_VERSION" in
+    2.13.0) TORCHVISION_VERSION="0.28.0"; TORCHAUDIO_VERSION="2.11.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu130 rocm7.1 cpu" ;;
+    2.12.1) TORCHVISION_VERSION="0.27.1"; TORCHAUDIO_VERSION="2.11.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu130 rocm7.1 cpu" ;;
+    2.12.0) TORCHVISION_VERSION="0.27.0"; TORCHAUDIO_VERSION="2.11.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu130 rocm7.1 cpu" ;;
+    2.11.0) TORCHVISION_VERSION="0.26.0"; TORCHAUDIO_VERSION="2.11.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cu130 rocm7.1 cpu" ;;
+    2.10.0) TORCHVISION_VERSION="0.25.0"; TORCHAUDIO_VERSION="2.10.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cu130 rocm7.1 cpu" ;;
+    2.9.1) TORCHVISION_VERSION="0.24.1"; TORCHAUDIO_VERSION="2.9.1"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cu130 cpu" ;;
+    2.9.0) TORCHVISION_VERSION="0.24.0"; TORCHAUDIO_VERSION="2.9.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cu130 cpu" ;;
+    2.8.0) TORCHVISION_VERSION="0.23.0"; TORCHAUDIO_VERSION="2.8.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cpu" ;;
+    2.7.1) TORCHVISION_VERSION="0.22.1"; TORCHAUDIO_VERSION="2.7.1"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cpu" ;;
+    2.7.0) TORCHVISION_VERSION="0.22.0"; TORCHAUDIO_VERSION="2.7.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cu128 cpu" ;;
+    2.6.0) TORCHVISION_VERSION="0.21.0"; TORCHAUDIO_VERSION="2.6.0"; SUPPORTED_PYTORCH_WHEEL_VARIANTS="cu126 cpu" ;;
+    *)
+        echo "Unsupported PYTORCH_VERSION: $PYTORCH_VERSION" >&2
+        echo "Add its compatibility data to the PyTorch version map." >&2
+        exit 1
+        ;;
+esac
+
+if [[ " $SUPPORTED_PYTORCH_WHEEL_VARIANTS " != *" $PYTORCH_WHEEL_VARIANT "* ]]; then
+    echo "PyTorch $PYTORCH_VERSION is not available for wheel variant $PYTORCH_WHEEL_VARIANT." >&2
+    echo "Supported variants: $SUPPORTED_PYTORCH_WHEEL_VARIANTS" >&2
+    exit 1
+fi
+
+PYTORCH_MAJOR_MINOR="${PYTORCH_VERSION%.*}"
+PYTORCH_FULL_VERSION="${PYTORCH_VERSION}+${PYTORCH_WHEEL_VARIANT}"
+TORCHVISION_FULL_VERSION="${TORCHVISION_VERSION}+${PYTORCH_WHEEL_VARIANT}"
+TORCHAUDIO_FULL_VERSION="${TORCHAUDIO_VERSION}+${PYTORCH_WHEEL_VARIANT}"
+PYTORCH_INDEX_URL="https://download.pytorch.org/whl/${PYTORCH_WHEEL_VARIANT}"
 
 # Critical package versions (enforced at end to override custom node dependencies)
 NUMPY_VERSION="2.2.6"               # NumPy version (2.2.x compatible with PyTorch 2.9+)
@@ -46,7 +76,8 @@ SYMLINK_CUSTOM_NODES=true           # Share custom_nodes across ComfyUI installa
 
 # Optional features (set to false to disable)
 INSTALL_NUNCHAKU=false              # Set to false to skip Nunchaku (NVIDIA GPU required)
-INSTALL_COMFYUI_FRONTEND=false       # Set to false to preserve a custom/existing frontend package
+INSTALL_COMFYUI_FRONTEND=true       # Set to false to preserve a custom/existing frontend package
+PIN_FRONTEND_VERSION_IN_ALIAS=false # Set to false to keep generated aliases from reinstalling the frontend on launch
 
 # ============================================
 # Derived Paths (auto-generated from BASE_PATH)
@@ -243,11 +274,17 @@ else
 fi
 if $INSTALL_COMFYUI_FRONTEND; then
     echo "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
+    if $PIN_FRONTEND_VERSION_IN_ALIAS; then
+        echo "  Frontend Alias Pin: Enabled"
+    else
+        echo "  Frontend Alias Pin: Disabled"
+    fi
 else
     echo "  ComfyUI Frontend: Unmanaged (preserving custom/existing package)"
+    echo "  Frontend Alias Pin: Disabled (frontend is unmanaged)"
 fi
 echo "  Python Version: $PYTHON_VERSION"
-echo "  PyTorch Version: $PYTORCH_FULL_VERSION (torchvision/torchaudio auto-selected)"
+echo "  PyTorch Stack: torch $PYTORCH_FULL_VERSION, torchvision $TORCHVISION_FULL_VERSION, torchaudio $TORCHAUDIO_FULL_VERSION"
 echo "  NumPy Version: $NUMPY_VERSION"
 echo "  Transformers Version: $TRANSFORMERS_VERSION"
 echo "  Shell: $DETECTED_SHELL ($SHELL_CONFIG_FILE)"
@@ -579,9 +616,8 @@ echo ""
 # Install PyTorch
 # Note: PyTorch version is configurable via PYTORCH_FULL_VERSION variable
 # Ensure nunchaku and flash-attn wheels are available for selected PyTorch version
-# torchvision and torchaudio versions are automatically selected by PyTorch index
 echo "Installing PyTorch ${PYTORCH_FULL_VERSION}..."
-uv pip install torch==${PYTORCH_FULL_VERSION} torchvision torchaudio --index-url ${PYTORCH_INDEX_URL}
+uv pip install torch==${PYTORCH_FULL_VERSION} torchvision==${TORCHVISION_FULL_VERSION} torchaudio==${TORCHAUDIO_FULL_VERSION} --index-url ${PYTORCH_INDEX_URL}
 
 fi  # End STEP_2
 
@@ -597,10 +633,10 @@ echo "════════════════════════�
 echo ""
 
 # Install nunchaku for PyTorch (dynamically select correct wheel for Python and PyTorch version)
-echo "Installing nunchaku 1.2.1 for PyTorch ${PYTORCH_VERSION} (Python ${PYTHON_WHEEL_TAG})..."
-NUNCHAKU_WHEEL="https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch${PYTORCH_VERSION}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-linux_x86_64.whl"
+echo "Installing nunchaku 1.2.1 for PyTorch ${PYTORCH_MAJOR_MINOR} (Python ${PYTHON_WHEEL_TAG})..."
+NUNCHAKU_WHEEL="https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch${PYTORCH_MAJOR_MINOR}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-linux_x86_64.whl"
 uv pip install "$NUNCHAKU_WHEEL" || {
-    echo "⚠️  Prebuilt nunchaku wheel not found for PyTorch ${PYTORCH_VERSION} / Python ${PYTHON_WHEEL_TAG}"
+    echo "⚠️  Prebuilt nunchaku wheel not found for PyTorch ${PYTORCH_MAJOR_MINOR} / Python ${PYTHON_WHEEL_TAG}"
     echo "   Trying to install from source or latest compatible version..."
     uv pip install nunchaku || echo "⚠️  Nunchaku installation failed (optional)"
 }
@@ -622,6 +658,8 @@ echo ""
 CONSTRAINTS_FILE=$(mktemp)
 cat > "$CONSTRAINTS_FILE" << EOF
 torch==${PYTORCH_FULL_VERSION}
+torchvision==${TORCHVISION_FULL_VERSION}
+torchaudio==${TORCHAUDIO_FULL_VERSION}
 numpy>=${NUMPY_VERSION}
 transformers==${TRANSFORMERS_VERSION}
 EOF
@@ -722,6 +760,8 @@ cd "$COMFYUI_DIR"
 CONSTRAINTS_FILE=$(mktemp)
 cat > "$CONSTRAINTS_FILE" << EOF
 torch==${PYTORCH_FULL_VERSION}
+torchvision==${TORCHVISION_FULL_VERSION}
+torchaudio==${TORCHAUDIO_FULL_VERSION}
 numpy>=${NUMPY_VERSION}
 EOF
 echo "Using constraints to prevent torch/numpy downgrade"
@@ -1030,6 +1070,8 @@ CUSTOM_NODES_DIR="${CUSTOM_NODES_DIR:-$COMFYUI_DIR/custom_nodes}"
 CONSTRAINTS_FILE=$(mktemp)
 cat > "$CONSTRAINTS_FILE" << EOF
 torch==${PYTORCH_FULL_VERSION}
+torchvision==${TORCHVISION_FULL_VERSION}
+torchaudio==${TORCHAUDIO_FULL_VERSION}
 numpy>=${NUMPY_VERSION}
 transformers==${TRANSFORMERS_VERSION}
 numba>=0.58.0
@@ -1070,6 +1112,8 @@ echo ""
 CONSTRAINTS_FILE=$(mktemp)
 cat > "$CONSTRAINTS_FILE" << EOF
 torch==${PYTORCH_FULL_VERSION}
+torchvision==${TORCHVISION_FULL_VERSION}
+torchaudio==${TORCHAUDIO_FULL_VERSION}
 numpy>=${NUMPY_VERSION}
 transformers==${TRANSFORMERS_VERSION}
 EOF
@@ -1079,10 +1123,10 @@ echo "Installing llama-cpp-python..."
 uv pip install --constraint "$CONSTRAINTS_FILE" "llama-cpp-python>=0.3.16"
 
 # Install flash-attn (pre-built wheel for PyTorch + CUDA 12.8)
-echo "Installing Flash Attention 2.8.3 for PyTorch ${PYTORCH_VERSION} (Python ${PYTHON_WHEEL_TAG})..."
-FLASH_ATTN_WHEEL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch${PYTORCH_VERSION}cxx11abiTRUE-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-linux_x86_64.whl"
+echo "Installing Flash Attention 2.8.3 for PyTorch ${PYTORCH_MAJOR_MINOR} (Python ${PYTHON_WHEEL_TAG})..."
+FLASH_ATTN_WHEEL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch${PYTORCH_MAJOR_MINOR}cxx11abiTRUE-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-linux_x86_64.whl"
 uv pip install "$FLASH_ATTN_WHEEL" 2>/dev/null || {
-    echo "⚠️  Prebuilt flash-attn wheel not found for PyTorch ${PYTORCH_VERSION} / Python ${PYTHON_WHEEL_TAG}"
+    echo "⚠️  Prebuilt flash-attn wheel not found for PyTorch ${PYTORCH_MAJOR_MINOR} / Python ${PYTHON_WHEEL_TAG}"
     echo "   Attempting to install from PyPI or skip..."
     uv pip install --constraint "$CONSTRAINTS_FILE" flash-attn --no-build-isolation 2>/dev/null || echo "⚠️  Flash Attention installation failed (optional)"
 }
@@ -1111,6 +1155,8 @@ echo ""
 CONSTRAINTS_FILE=$(mktemp)
 cat > "$CONSTRAINTS_FILE" << EOF
 torch==${PYTORCH_FULL_VERSION}
+torchvision==${TORCHVISION_FULL_VERSION}
+torchaudio==${TORCHAUDIO_FULL_VERSION}
 numpy>=${NUMPY_VERSION}
 transformers==${TRANSFORMERS_VERSION}
 EOF
@@ -1157,9 +1203,8 @@ else
 fi
 echo ""
 
-# Ensure PyTorch with exact configured version (will upgrade/downgrade if needed)
-# torchvision and torchaudio versions are automatically selected by PyTorch index
-uv pip install torch==${PYTORCH_FULL_VERSION} torchvision torchaudio --index-url ${PYTORCH_INDEX_URL} || {
+# Ensure the PyTorch packages use binary-compatible versions
+uv pip install torch==${PYTORCH_FULL_VERSION} torchvision==${TORCHVISION_FULL_VERSION} torchaudio==${TORCHAUDIO_FULL_VERSION} --index-url ${PYTORCH_INDEX_URL} || {
     echo "⚠️  PyTorch installation failed, continuing anyway..."
 }
 
@@ -1218,7 +1263,7 @@ add_bash_aliases() {
     # Add launch alias if it doesn't already exist
     if [ -f "$config_file" ] && grep -q "^alias ${COMFYUI_ALIAS}=" "$config_file"; then
         echo "  ✓ Alias '${COMFYUI_ALIAS}' already exists in $config_name — skipping"
-        if ! $INSTALL_COMFYUI_FRONTEND && grep -E "^alias ${COMFYUI_ALIAS}=.*comfyui-frontend-package" "$config_file" >/dev/null 2>&1; then
+        if { ! $INSTALL_COMFYUI_FRONTEND || ! $PIN_FRONTEND_VERSION_IN_ALIAS; } && grep -E "^alias ${COMFYUI_ALIAS}=.*comfyui-frontend-package" "$config_file" >/dev/null 2>&1; then
             echo "  ⚠️  Existing alias still pins the frontend; remove it and rerun step 11 to regenerate it"
         fi
         if [ -n "$COMFYUI_LAUNCH_ARGS" ] && ! grep -E "^alias ${COMFYUI_ALIAS}=" "$config_file" | grep -Fq -- "$COMFYUI_LAUNCH_ARGS"; then
@@ -1227,11 +1272,11 @@ add_bash_aliases() {
     else
         {
             echo ""
-            if $INSTALL_COMFYUI_FRONTEND; then
+            if $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
                 echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
                 echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
             else
-                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend unmanaged)"
+                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend not pinned on launch)"
                 echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
             fi
         } >> "$config_file"
@@ -1275,7 +1320,7 @@ add_fish_functions() {
     # Add launch function if it doesn't already exist
     if [ -f "$config_file" ] && grep -q "^function ${COMFYUI_ALIAS}\$" "$config_file"; then
         echo "  ✓ Function '${COMFYUI_ALIAS}' already exists in Fish config — skipping"
-        if ! $INSTALL_COMFYUI_FRONTEND; then
+        if ! $INSTALL_COMFYUI_FRONTEND || ! $PIN_FRONTEND_VERSION_IN_ALIAS; then
             echo "  ⚠️  Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
         fi
         if [ -n "$COMFYUI_LAUNCH_ARGS" ]; then
@@ -1284,14 +1329,14 @@ add_fish_functions() {
     else
         {
             echo ""
-            if $INSTALL_COMFYUI_FRONTEND; then
+            if $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
                 echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
             else
-                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend unmanaged)"
+                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend not pinned on launch)"
             fi
             echo "function ${COMFYUI_ALIAS}"
             echo "    source $VENV_PATH/bin/activate.fish"
-            if $INSTALL_COMFYUI_FRONTEND; then
+            if $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
                 echo "    uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
             fi
             echo "    cd $COMFYUI_DIR"

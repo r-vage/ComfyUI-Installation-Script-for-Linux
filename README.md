@@ -91,34 +91,47 @@ PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"  # pyenv installation directory
 ### PyTorch Configuration
 
 ```bash
-PYTORCH_VERSION="2.9"             # PyTorch major.minor for wheel URLs
-PYTORCH_FULL_VERSION="2.9.1+cu128" # Full version string
-PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"  # Wheel repository
+PYTORCH_VERSION="2.9.1"           # Base PyTorch version
+PYTORCH_WHEEL_VARIANT="cu128"     # CUDA, ROCm, or CPU wheel variant
 ```
 
-**Available options**:
+The installers derive the wheel index URL and the matching TorchVision and TorchAudio versions automatically. Users do not need to look up or configure companion-package versions. Unsupported PyTorch releases stop with a clear message rather than installing a potentially ABI-incompatible stack.
+
+> **Windows equivalent:** `$PYTORCH_VERSION = "2.9.1"` and `$PYTORCH_WHEEL_VARIANT = "cu128"`.
+
+Current post-2.9 compatibility and wheel availability:
+
+| PyTorch | TorchVision | TorchAudio | Linux variants | Windows variants |
+| --- | --- | --- | --- | --- |
+| `2.9.1` | `0.24.1` | `2.9.1` | `cu126`, `cu128`, `cu130`, `cpu` | `cu126`, `cu128`, `cu130`, `cpu` |
+| `2.10.0` | `0.25.0` | `2.10.0` | `cu126`, `cu128`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu128`, `cu130`, `cpu` |
+| `2.11.0` | `0.26.0` | `2.11.0` | `cu126`, `cu128`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu128`, `cu130`, `cpu` |
+| `2.12.0` | `0.27.0` | `2.11.0` | `cu126`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu130`, `cpu` |
+| `2.12.1` | `0.27.1` | `2.11.0` | `cu126`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu130`, `cpu` |
+| `2.13.0` | `0.28.0` | `2.11.0` | `cu126`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu130`, `cpu` |
+
+TorchAudio `2.11.0` is its final release and is explicitly forward-compatible with newer Torch releases. The installers validate the selected version/channel pair before installation; notably, `cu128` stops at PyTorch `2.11.0`.
+
+**Available wheel channels**:
 - **CUDA 13.0**: `cu130` (latest)
 - **CUDA 12.8**: `cu128` (default)
 - **CUDA 12.6**: `cu126`
-- **ROCm 7.1**: `rocm7.1` (AMD GPUs)
+- **ROCm 7.1**: `rocm7.1` (AMD GPUs, Linux only)
 - **CPU only**: `cpu` (no GPU)
 
 Example CUDA 13.0 configuration:
 ```bash
-PYTORCH_FULL_VERSION="2.9.1+cu130"
-PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
+PYTORCH_WHEEL_VARIANT="cu130"
 ```
 
 Example ROCm 7.1 configuration (AMD GPUs):
 ```bash
-PYTORCH_FULL_VERSION="2.9.1+rocm7.1"
-PYTORCH_INDEX_URL="https://download.pytorch.org/whl/rocm7.1"
+PYTORCH_WHEEL_VARIANT="rocm7.1"
 ```
 
 Example CPU configuration:
 ```bash
-PYTORCH_FULL_VERSION="2.9.1+cpu"
-PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+PYTORCH_WHEEL_VARIANT="cpu"
 ```
 
 ### Critical Package Versions
@@ -138,7 +151,7 @@ When frontend management is enabled (the default), the script prompts for three 
 Enter values for this installation (press Enter for defaults):
 
   ComfyUI version [0.28.0]:     # → clones/checks out this tag (e.g., v0.28.0)
-  Frontend version [1.45.21]:   # → pinned in aliases and launchers
+  Frontend version [1.45.21]:   # → managed package version
   Launch alias [comfy]:         # → first available name (comfy, comfy1, comfy2, ...)
 ```
 
@@ -148,6 +161,7 @@ If the alias prompt is left empty, the installer checks existing shell/profile d
 
 Static configuration (Python, PyTorch, NumPy, Transformers, launch arguments) stays at the top of the script and rarely changes.
 Set `INSTALL_COMFYUI_FRONTEND=false` (`$false` on Windows) to skip the frontend-version prompt and prevent every installer and launcher path from installing, upgrading, downgrading, or enforcing `comfyui-frontend-package`. This includes frontend pins pulled from ComfyUI or custom-node requirements.
+Set `PIN_FRONTEND_VERSION_IN_ALIAS=false` (`$false` on Windows) to keep the generated shell or PowerShell profile alias from reinstalling the managed frontend on every launch. Installation-time enforcement and generated launcher scripts remain enabled when `INSTALL_COMFYUI_FRONTEND=true`.
 
 When sharing is enabled for a new installation, files introduced by the fresh ComfyUI checkout are copied into the shared directory only when the same relative path does not already exist. Existing shared files are never overwritten. The checkout folder is then removed and replaced by the symlink or junction. This also repairs a previous incomplete sharing setup when the local folder still contains only pristine checkout files. If an existing local installation contains modified, untracked, or ignored files while the shared directory also contains data, both directories are preserved and the installer asks you to merge them manually.
 
@@ -215,6 +229,7 @@ Migration is conservative: populated local data is copied only when the shared t
 ```bash
 INSTALL_NUNCHAKU=true               # Nunchaku acceleration (requires NVIDIA GPU)
 INSTALL_COMFYUI_FRONTEND=true       # Pin/install the configured frontend package
+PIN_FRONTEND_VERSION_IN_ALIAS=false # Do not reinstall the frontend from the shell/profile alias
 COMFYUI_LAUNCH_ARGS="--multi-user --disable-pinned-memory"
 ```
 

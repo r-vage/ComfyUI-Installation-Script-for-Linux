@@ -29,9 +29,38 @@ $BASE_PATH = "D:\AI"                          # Parent directory for ComfyUI, ve
 $PYTHON_VERSION = "3.12.10"                   # Python version to install via pyenv-win
 
 # PyTorch version configuration
-$PYTORCH_VERSION = "2.9"                      # PyTorch major.minor version for wheel URLs (e.g., 2.9, 2.10)
-$PYTORCH_FULL_VERSION = "2.9.1+cu128"         # Full PyTorch version for package installation
-$PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/cu128"  # PyTorch index URL (cu128, cu121, cpu)
+$PYTORCH_VERSION = "2.9.1"                    # Base PyTorch version
+$PYTORCH_WHEEL_VARIANT = "cu128"              # Wheel variant (cu126, cu128, cu130, cpu)
+
+$PYTORCH_COMPATIBILITY = @{
+    "2.13.0" = @{ TorchVision = "0.28.0"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu130", "cpu") }
+    "2.12.1" = @{ TorchVision = "0.27.1"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu130", "cpu") }
+    "2.12.0" = @{ TorchVision = "0.27.0"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu130", "cpu") }
+    "2.11.0" = @{ TorchVision = "0.26.0"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu128", "cu130", "cpu") }
+    "2.10.0" = @{ TorchVision = "0.25.0"; TorchAudio = "2.10.0"; Variants = @("cu126", "cu128", "cu130", "cpu") }
+    "2.9.1" = @{ TorchVision = "0.24.1"; TorchAudio = "2.9.1"; Variants = @("cu126", "cu128", "cu130", "cpu") }
+    "2.9.0" = @{ TorchVision = "0.24.0"; TorchAudio = "2.9.0"; Variants = @("cu126", "cu128", "cu130", "cpu") }
+    "2.8.0" = @{ TorchVision = "0.23.0"; TorchAudio = "2.8.0"; Variants = @("cu126", "cu128", "cpu") }
+    "2.7.1" = @{ TorchVision = "0.22.1"; TorchAudio = "2.7.1"; Variants = @("cu126", "cu128", "cpu") }
+    "2.7.0" = @{ TorchVision = "0.22.0"; TorchAudio = "2.7.0"; Variants = @("cu126", "cu128", "cpu") }
+    "2.6.0" = @{ TorchVision = "0.21.0"; TorchAudio = "2.6.0"; Variants = @("cu126", "cpu") }
+}
+if (-not $PYTORCH_COMPATIBILITY.ContainsKey($PYTORCH_VERSION)) {
+    throw "Unsupported PYTORCH_VERSION: $PYTORCH_VERSION. Add its compatibility data to the PyTorch version map."
+}
+
+$PYTORCH_STACK = $PYTORCH_COMPATIBILITY[$PYTORCH_VERSION]
+if ($PYTORCH_STACK.Variants -notcontains $PYTORCH_WHEEL_VARIANT) {
+    throw "PyTorch $PYTORCH_VERSION is not available for wheel variant $PYTORCH_WHEEL_VARIANT. Supported variants: $($PYTORCH_STACK.Variants -join ', ')"
+}
+
+$PYTORCH_MAJOR_MINOR = ($PYTORCH_VERSION -split '\.')[0..1] -join '.'
+$TORCHVISION_VERSION = $PYTORCH_STACK.TorchVision
+$TORCHAUDIO_VERSION = $PYTORCH_STACK.TorchAudio
+$PYTORCH_FULL_VERSION = "$PYTORCH_VERSION+$PYTORCH_WHEEL_VARIANT"
+$TORCHVISION_FULL_VERSION = "$TORCHVISION_VERSION+$PYTORCH_WHEEL_VARIANT"
+$TORCHAUDIO_FULL_VERSION = "$TORCHAUDIO_VERSION+$PYTORCH_WHEEL_VARIANT"
+$PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
 
 # Critical package versions (enforced at end to override custom node dependencies)
 $NUMPY_VERSION = "2.2.6"                      # NumPy version (2.2.x compatible with PyTorch 2.9+)
@@ -54,6 +83,7 @@ $SYMLINK_CUSTOM_NODES = $true                 # Share custom_nodes across ComfyU
 # Optional features
 $INSTALL_NUNCHAKU = $false                    # Set to $false to skip Nunchaku (NVIDIA GPU required)
 $INSTALL_COMFYUI_FRONTEND = $true             # Set to $false to preserve a custom/existing frontend package
+$PIN_FRONTEND_VERSION_IN_ALIAS = $false        # Set to $false to keep the PowerShell alias from reinstalling the frontend on launch
 
 # ============================================
 # Derived Paths (auto-generated from BASE_PATH)
@@ -495,11 +525,13 @@ if ($COMFYUI_VERSION) {
 }
 if ($INSTALL_COMFYUI_FRONTEND) {
     Write-Host "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
+    Write-Host "  Frontend Alias Pin: $(if ($PIN_FRONTEND_VERSION_IN_ALIAS) { "Enabled" } else { "Disabled" })"
 } else {
     Write-Host "  ComfyUI Frontend: Unmanaged (preserving custom/existing package)"
+    Write-Host "  Frontend Alias Pin: Disabled (frontend is unmanaged)"
 }
 Write-Host "  Python Version: $PYTHON_VERSION"
-Write-Host "  PyTorch Version: $PYTORCH_FULL_VERSION (torchvision/torchaudio auto-selected)"
+Write-Host "  PyTorch Stack: torch $PYTORCH_FULL_VERSION, torchvision $TORCHVISION_FULL_VERSION, torchaudio $TORCHAUDIO_FULL_VERSION"
 Write-Host "  NumPy Version: $NUMPY_VERSION"
 Write-Host "  Transformers Version: $TRANSFORMERS_VERSION"
 Write-Host "  PowerShell: $($PSVersionTable.PSVersion.ToString())"
@@ -767,7 +799,7 @@ if ($Steps[2]) {
     Write-Header "[2/11] Installing PyTorch and Base Dependencies"
 
     Write-Step "Installing PyTorch ${PYTORCH_FULL_VERSION}..."
-    uv pip install "torch==$PYTORCH_FULL_VERSION" torchvision torchaudio --index-url $PYTORCH_INDEX_URL
+    uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
 }
 
 # ============================================================================
@@ -778,14 +810,14 @@ if ($Steps[3]) {
     Write-Header "[3/11] Installing Nunchaku Acceleration Library"
 
     $PYTHON_WHEEL_TAG = $script:PYTHON_WHEEL_TAG
-    Write-Step "Installing nunchaku 1.2.1 for PyTorch ${PYTORCH_VERSION} (Python ${PYTHON_WHEEL_TAG})..."
-    $NUNCHAKU_WHEEL = "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch${PYTORCH_VERSION}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-win_amd64.whl"
+    Write-Step "Installing nunchaku 1.2.1 for PyTorch ${PYTORCH_MAJOR_MINOR} (Python ${PYTHON_WHEEL_TAG})..."
+    $NUNCHAKU_WHEEL = "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch${PYTORCH_MAJOR_MINOR}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-win_amd64.whl"
 
     try {
         uv pip install $NUNCHAKU_WHEEL
     }
     catch {
-        Write-Warn "Prebuilt nunchaku wheel not found for PyTorch ${PYTORCH_VERSION} / Python ${PYTHON_WHEEL_TAG}"
+        Write-Warn "Prebuilt nunchaku wheel not found for PyTorch ${PYTORCH_MAJOR_MINOR} / Python ${PYTHON_WHEEL_TAG}"
         Write-Step "Trying to install from source or latest compatible version..."
         try {
             uv pip install nunchaku
@@ -807,6 +839,8 @@ if ($Steps[4]) {
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
     @"
 torch==$PYTORCH_FULL_VERSION
+torchvision==$TORCHVISION_FULL_VERSION
+torchaudio==$TORCHAUDIO_FULL_VERSION
 numpy>=$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
@@ -917,6 +951,8 @@ if ($Steps[5]) {
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
     @"
 torch==$PYTORCH_FULL_VERSION
+torchvision==$TORCHVISION_FULL_VERSION
+torchaudio==$TORCHAUDIO_FULL_VERSION
 numpy>=$NUMPY_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
 
@@ -1058,6 +1094,8 @@ if ($Steps[7]) {
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
     @"
 torch==$PYTORCH_FULL_VERSION
+torchvision==$TORCHVISION_FULL_VERSION
+torchaudio==$TORCHAUDIO_FULL_VERSION
 numpy>=$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 numba>=0.58.0
@@ -1090,6 +1128,8 @@ if ($Steps[8]) {
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
     @"
 torch==$PYTORCH_FULL_VERSION
+torchvision==$TORCHVISION_FULL_VERSION
+torchaudio==$TORCHAUDIO_FULL_VERSION
 numpy>=$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
@@ -1104,10 +1144,10 @@ transformers==$TRANSFORMERS_VERSION
     # Extract CUDA version from index URL (e.g., "cu128" from ".../whl/cu128")
     $CUDA_VERSION = ($PYTORCH_INDEX_URL -split '/')[-1]
     $FLASH_ATTN_VERSION = "2.8.3"
-    $FLASH_ATTN_WHEEL = "https://github.com/r-vage/ComfyUI_Eclipse/releases/download/wheels/flash_attn-${FLASH_ATTN_VERSION}+${CUDA_VERSION}torch${PYTORCH_VERSION}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-win_amd64.whl"
+    $FLASH_ATTN_WHEEL = "https://github.com/r-vage/ComfyUI_Eclipse/releases/download/wheels/flash_attn-${FLASH_ATTN_VERSION}+${CUDA_VERSION}torch${PYTORCH_MAJOR_MINOR}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-win_amd64.whl"
 
     Write-Host ""
-    Write-Step "Attempting Flash Attention from prebuilt wheel (${PYTHON_WHEEL_TAG}, ${CUDA_VERSION}, torch${PYTORCH_VERSION})..."
+    Write-Step "Attempting Flash Attention from prebuilt wheel (${PYTHON_WHEEL_TAG}, ${CUDA_VERSION}, torch${PYTORCH_MAJOR_MINOR})..."
     $flashInstalled = Invoke-SafeCommand "Installing flash-attn ${FLASH_ATTN_VERSION} (prebuilt wheel)" {
         uv pip install --constraint $CONSTRAINTS_FILE $FLASH_ATTN_WHEEL
     } -Optional
@@ -1146,6 +1186,8 @@ if ($Steps[9]) {
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
     @"
 torch==$PYTORCH_FULL_VERSION
+torchvision==$TORCHVISION_FULL_VERSION
+torchaudio==$TORCHAUDIO_FULL_VERSION
 numpy>=$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
@@ -1191,7 +1233,7 @@ if ($Steps[10]) {
 
     # Ensure PyTorch
     Invoke-SafeCommand "Enforcing PyTorch $PYTORCH_FULL_VERSION" {
-        uv pip install "torch==$PYTORCH_FULL_VERSION" torchvision torchaudio --index-url $PYTORCH_INDEX_URL
+        uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
     } -Optional
 
     # Ensure NumPy
@@ -1322,14 +1364,14 @@ call "$VENV_PATH\Scripts\activate.bat"
     # Add launch function if it doesn't already exist
     if ($profileContent -match "function $COMFYUI_ALIAS\b") {
         Write-Success "Function '$COMFYUI_ALIAS' already exists in profile - skipping"
-        if (-not $INSTALL_COMFYUI_FRONTEND) {
+        if ((-not $INSTALL_COMFYUI_FRONTEND) -or (-not $PIN_FRONTEND_VERSION_IN_ALIAS)) {
             Write-Warn "Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
         }
         if (-not [string]::IsNullOrWhiteSpace($COMFYUI_LAUNCH_ARGS)) {
             Write-Warn "Existing function may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
         }
     } else {
-        $frontendFunctionSetup = if ($INSTALL_COMFYUI_FRONTEND) {
+        $frontendFunctionSetup = if ($INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
             "    & `"$VENV_PATH\Scripts\python.exe`" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION`r`n"
         } else {
             ""
@@ -1371,8 +1413,10 @@ function envact {
     Write-Host ""
     Write-Host ("=" * 67) -ForegroundColor Cyan
     Write-Host "Launcher and alias configuration complete!" -ForegroundColor Cyan
-    if ($INSTALL_COMFYUI_FRONTEND) {
+    if ($INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
         Write-Host "  - $COMFYUI_ALIAS : activate environment, pin frontend, launch ComfyUI"
+    } elseif ($INSTALL_COMFYUI_FRONTEND) {
+        Write-Host "  - $COMFYUI_ALIAS : activate environment and launch ComfyUI (frontend managed, alias pin disabled)"
     } else {
         Write-Host "  - $COMFYUI_ALIAS : activate environment and launch ComfyUI (frontend unmanaged)"
     }
@@ -1429,8 +1473,10 @@ if (Test-Path $PROFILE) {
     $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
     if ($profileContent -and $profileContent -match "function $COMFYUI_ALIAS\b") {
         Write-Host "  Option 3 - PowerShell alias (after reloading profile):" -ForegroundColor White
-        if ($INSTALL_COMFYUI_FRONTEND) {
+        if ($INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
             Write-Host "    $COMFYUI_ALIAS          # Pin frontend + launch ComfyUI"
+        } elseif ($INSTALL_COMFYUI_FRONTEND) {
+            Write-Host "    $COMFYUI_ALIAS          # Launch ComfyUI (frontend managed)"
         } else {
             Write-Host "    $COMFYUI_ALIAS          # Launch ComfyUI (frontend unmanaged)"
         }

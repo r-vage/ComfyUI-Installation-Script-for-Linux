@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-08-07
+
+### Added
+- Independent `PIN_FRONTEND_VERSION_IN_ALIAS` control for enabling or disabling launch-time frontend pinning in generated Bash, Zsh, Fish, and PowerShell profile aliases while keeping installation-time frontend management enabled
+
+### Changed
+- PyTorch configuration now separates the base `PYTORCH_VERSION` from `PYTORCH_WHEEL_VARIANT`; both installers derive the index URL and compatible TorchVision and TorchAudio versions from those settings
+- Compatibility maps now cover stable PyTorch releases through `2.13.0` and reject unavailable version/channel combinations before installation; Torch `2.12+` correctly uses the forward-compatible final TorchAudio `2.11.0` release
+
+### Fixed
+- Linux and Windows installation and dependency constraints now enforce matching `torch 2.9.1+cu128`, `torchvision 0.24.1+cu128`, and `torchaudio 2.9.1+cu128` builds to prevent native-extension ABI errors
+
+**Changed files:** `install_comfy_env.sh`, `install_comfy_env_win.ps1`, `README.md`, `CHANGELOG.md`, `pyproject.toml`
+
+---
+
 ## [0.12.1] - 2026-08-06
 
 ### Fixed

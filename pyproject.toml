@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-installation-script"
-version = "0.12.1"
+version = "0.12.2"
 description = "Cross-platform installation scripts (Linux bash + Windows PowerShell) for setting up isolated ComfyUI environments with shared models, input, output, user data, and custom_nodes folders across multiple ComfyUI versions."
 license = { text = "MIT" }
 readme = "README.md"
