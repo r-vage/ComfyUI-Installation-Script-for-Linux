@@ -5,10 +5,10 @@
 #   .\install_comfy_env.ps1
 #
 # Requirements:
-#   - Windows 10/11
+#   - Windows 10/11 (AMD ROCm acceleration requires Windows 11)
 #   - Git installed and in PATH
 #   - Internet connection
-#   - NVIDIA GPU with CUDA support (for GPU acceleration)
+#   - NVIDIA CUDA or a supported AMD ROCm GPU/APU (for GPU acceleration)
 #
 # Note: Run PowerShell as Administrator if you want to create directory symlinks.
 #       Without admin, the script uses directory junctions (which work for most cases).
@@ -46,6 +46,20 @@ $NUNCHAKU_SUPPORTED_PYTHON_TAGS = @("cp310", "cp311", "cp312", "cp313")
 $FLASH_ATTN_VERSION = "2.8.3"
 $SAGEATTENTION_VERSION = "2.2.0"
 $SAGEATTENTION_FALLBACK_VERSION = "1.0.6"
+$AMD_ROCM_VERSION = "7.2.1"
+$AMD_ROCM_REQUIRED_DRIVER = "26.2.2"
+$AMD_ROCM_REQUIRED_PYTHON = "3.12"
+$AMD_ROCM_PYTORCH_VERSION = "2.9.1"
+$AMD_ROCM_TORCHVISION_VERSION = "0.24.1"
+$AMD_ROCM_TORCHAUDIO_VERSION = "2.9.1"
+$AMD_ROCM_BASE_URL = "https://repo.radeon.com/rocm/windows/rocm-rel-$AMD_ROCM_VERSION"
+$AMD_ROCM_SDK_PACKAGES = @(
+    "$AMD_ROCM_BASE_URL/rocm_sdk_core-$AMD_ROCM_VERSION-py3-none-win_amd64.whl"
+    "$AMD_ROCM_BASE_URL/rocm_sdk_devel-$AMD_ROCM_VERSION-py3-none-win_amd64.whl"
+    "$AMD_ROCM_BASE_URL/rocm_sdk_libraries_custom-$AMD_ROCM_VERSION-py3-none-win_amd64.whl"
+    "$AMD_ROCM_BASE_URL/rocm-$AMD_ROCM_VERSION.tar.gz"
+)
+
 $InstallerScriptPath = $PSCommandPath
 
 $Embedded = @{
@@ -94,7 +108,7 @@ $PYTORCH_COMPATIBILITY = @{
     "2.12.0" = @{ TorchVision = "0.27.0"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu130", "cpu") }
     "2.11.0" = @{ TorchVision = "0.26.0"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu128", "cu130", "cpu") }
     "2.10.0" = @{ TorchVision = "0.25.0"; TorchAudio = "2.10.0"; Variants = @("cu126", "cu128", "cu130", "cpu") }
-    "2.9.1" = @{ TorchVision = "0.24.1"; TorchAudio = "2.9.1"; Variants = @("cu126", "cu128", "cu130", "cpu") }
+    "2.9.1" = @{ TorchVision = "0.24.1"; TorchAudio = "2.9.1"; Variants = @("cu126", "cu128", "cu130", "rocm7.2.1", "cpu") }
     "2.9.0" = @{ TorchVision = "0.24.0"; TorchAudio = "2.9.0"; Variants = @("cu126", "cu128", "cu130", "cpu") }
     "2.8.0" = @{ TorchVision = "0.23.0"; TorchAudio = "2.8.0"; Variants = @("cu126", "cu128", "cpu") }
     "2.7.1" = @{ TorchVision = "0.22.1"; TorchAudio = "2.7.1"; Variants = @("cu126", "cu128", "cpu") }
@@ -128,8 +142,25 @@ function Resolve-PyTorchStack {
     $script:PYTORCH_FULL_VERSION = "$PYTORCH_VERSION+$PYTORCH_WHEEL_VARIANT"
     $script:TORCHVISION_FULL_VERSION = "$TORCHVISION_VERSION+$PYTORCH_WHEEL_VARIANT"
     $script:TORCHAUDIO_FULL_VERSION = "$TORCHAUDIO_VERSION+$PYTORCH_WHEEL_VARIANT"
-    $script:PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
-    $script:HARDWARE_BACKEND = if ($PYTORCH_WHEEL_VARIANT -eq "cpu") { "cpu" } else { "nvidia" }
+    if ($PYTORCH_WHEEL_VARIANT -eq "rocm$AMD_ROCM_VERSION") {
+        if ($PYTORCH_VERSION -ne $AMD_ROCM_PYTORCH_VERSION -or
+            $TORCHVISION_VERSION -ne $AMD_ROCM_TORCHVISION_VERSION -or
+            $TORCHAUDIO_VERSION -ne $AMD_ROCM_TORCHAUDIO_VERSION) {
+            throw "Windows ROCm $AMD_ROCM_VERSION requires torch $AMD_ROCM_PYTORCH_VERSION, torchvision $AMD_ROCM_TORCHVISION_VERSION, and torchaudio $AMD_ROCM_TORCHAUDIO_VERSION."
+        }
+        $script:PYTORCH_INDEX_URL = $AMD_ROCM_BASE_URL
+        $script:HARDWARE_BACKEND = "rocm"
+        $script:AMD_ROCM_TORCH_PACKAGES = @(
+            "$AMD_ROCM_BASE_URL/torch-$PYTORCH_FULL_VERSION-cp312-cp312-win_amd64.whl"
+            "$AMD_ROCM_BASE_URL/torchaudio-$TORCHAUDIO_FULL_VERSION-cp312-cp312-win_amd64.whl"
+            "$AMD_ROCM_BASE_URL/torchvision-$TORCHVISION_FULL_VERSION-cp312-cp312-win_amd64.whl"
+        )
+    }
+    else {
+        $script:PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
+        $script:HARDWARE_BACKEND = if ($PYTORCH_WHEEL_VARIANT -eq "cpu") { "cpu" } else { "nvidia" }
+        $script:AMD_ROCM_TORCH_PACKAGES = @()
+    }
 
     switch ($PYTORCH_WHEEL_VARIANT) {
         "cu128" {
@@ -267,6 +298,7 @@ function Invoke-SafeCommand {
         }
         return $true
     }
+
     catch {
         if ($Optional) {
             Write-Warn "$Description failed: $($_.Exception.Message) (optional, continuing)"
@@ -292,6 +324,20 @@ function Remove-FlashAttention {
 function Test-PythonImport {
     param([string]$ImportStatement)
     python -c $ImportStatement 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Test-AmdRocmTorch {
+    $probe = @'
+import torch
+if not torch.version.hip:
+    raise RuntimeError("The installed PyTorch build does not report a HIP runtime")
+if not torch.cuda.is_available():
+    raise RuntimeError("PyTorch ROCm cannot access a supported AMD GPU")
+torch.empty(1, device="cuda")
+torch.cuda.synchronize()
+'@
+    python -c $probe 2>$null
     return $LASTEXITCODE -eq 0
 }
 
@@ -660,6 +706,91 @@ function Copy-IfMissing {
 # ============================================
 # Interactive Prompts
 # ============================================
+function Normalize-RocmVariant {
+    param([string]$Value)
+    $normalized = $Value.ToLowerInvariant().Replace("rocm", "").Replace(".", "")
+    switch ($normalized) {
+        "72" { return "rocm7.2.1" }
+        "721" { return "rocm7.2.1" }
+        default { return $null }
+    }
+}
+
+function Assert-AmdRocmWindowsCompatibility {
+    if ($HARDWARE_BACKEND -ne "rocm") { return }
+
+    $configuredPython = ($PYTHON_VERSION -split '\.')[0..1] -join '.'
+    if ($configuredPython -ne $AMD_ROCM_REQUIRED_PYTHON) {
+        throw "Windows ROCm $AMD_ROCM_VERSION requires Python $AMD_ROCM_REQUIRED_PYTHON; configured Python is $PYTHON_VERSION."
+    }
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw "Windows ROCm $AMD_ROCM_VERSION requires 64-bit Windows 11."
+    }
+
+    try {
+        $osBuild = [int](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).BuildNumber
+    }
+    catch {
+        $osBuild = [Environment]::OSVersion.Version.Build
+        Write-Warn "Could not query the Windows build through CIM; using environment build $osBuild."
+    }
+    if ($osBuild -lt 22000) {
+        throw "Windows ROCm $AMD_ROCM_VERSION requires Windows 11 build 22000 or newer; detected build $osBuild."
+    }
+
+    $adapterNames = @()
+    try {
+        $adapterNames = @(Get-CimInstance Win32_VideoController -ErrorAction Stop |
+            Where-Object { $_.Name -match '(?i)AMD|Radeon' } |
+            ForEach-Object { $_.Name })
+    }
+    catch {
+        Write-Warn "Could not inspect display adapters before installing ROCm."
+    }
+    if ($adapterNames.Count -eq 0) {
+        Write-Warn "No AMD display adapter was detected. The install will stop if the ROCm runtime probe cannot access a supported GPU."
+    }
+    else {
+        Write-Host "  Detected AMD adapter(s): $($adapterNames -join ', ')"
+    }
+
+    Write-Warn "Windows ROCm $AMD_ROCM_VERSION requires AMD Software: PyTorch on Windows Edition driver $AMD_ROCM_REQUIRED_DRIVER and hardware listed in AMD's support matrix."
+    if ($COMFYUI_LAUNCH_ARGS -notmatch '(?:^|\s)--disable-pinned-memory(?:\s|$)') {
+        Write-Warn "AMD recommends adding --disable-pinned-memory to ComfyUI launch arguments; --lowvram can also help on lower-memory systems."
+    }
+}
+
+function Install-ManagedPyTorchStack {
+    if ($HARDWARE_BACKEND -eq "rocm") {
+        $activePython = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" | Select-Object -First 1
+        if ($activePython) { $activePython = $activePython.Trim() }
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($activePython)) {
+            throw "Could not inspect the active Python version before installing AMD ROCm."
+        }
+        if ($activePython -ne $AMD_ROCM_REQUIRED_PYTHON) {
+            throw "The active environment uses Python $activePython; Windows ROCm $AMD_ROCM_VERSION wheels require Python $AMD_ROCM_REQUIRED_PYTHON."
+        }
+
+        Write-Step "Installing the official AMD ROCm $AMD_ROCM_VERSION SDK packages..."
+        uv pip install @AMD_ROCM_SDK_PACKAGES
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install the official AMD ROCm $AMD_ROCM_VERSION SDK packages."
+        }
+
+        Write-Step "Installing the official AMD PyTorch $PYTORCH_FULL_VERSION packages..."
+        uv pip install @AMD_ROCM_TORCH_PACKAGES
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install the official AMD PyTorch on Windows packages."
+        }
+    }
+    else {
+        uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install the managed PyTorch stack."
+        }
+    }
+}
+
 function Read-Default {
     param([string]$Label, [string]$Default)
     $answer = Read-Host "  $Label [$Default]"
@@ -754,10 +885,10 @@ elseif ($CONFIG_MODE -eq "advanced") {
     $answer = Read-Default "PyTorch version" $PYTORCH_VERSION
     if ($answer -eq "-") { $Manage.Torch = $false } else { $PYTORCH_VERSION = $answer }
 
-    $backendDefault = if ($PYTORCH_WHEEL_VARIANT -eq "cpu") { "cpu" } else { "nvidia" }
+    $backendDefault = if ($PYTORCH_WHEEL_VARIANT.StartsWith("rocm")) { "amd" } elseif ($PYTORCH_WHEEL_VARIANT -eq "cpu") { "cpu" } else { "nvidia" }
     $backendAccepted = $false
     while (-not $backendAccepted) {
-        $backend = (Read-Default "Hardware backend (NVIDIA/CPU)" $backendDefault).ToLowerInvariant()
+        $backend = (Read-Default "Hardware backend (NVIDIA/AMD/CPU)" $backendDefault).ToLowerInvariant()
         switch -Regex ($backend) {
             '^-$' {
                 $Manage.Torch = $false
@@ -786,9 +917,24 @@ elseif ($CONFIG_MODE -eq "advanced") {
                 $backendAccepted = $true
             }
             '^(a|amd|rocm|amd/rocm)$' {
-                Write-Warn "Official PyTorch Windows instructions do not provide ROCm wheels. ROCm is supported by the Linux installer only."
+                $rocmDefault = if ($PYTORCH_WHEEL_VARIANT.StartsWith("rocm")) { $PYTORCH_WHEEL_VARIANT } else { "rocm$AMD_ROCM_VERSION" }
+                $rocm = Read-Default "ROCm version" $rocmDefault
+                if ($rocm -eq "-") {
+                    $Manage.Torch = $false
+                    $backendAccepted = $true
+                }
+                else {
+                    $variant = Normalize-RocmVariant $rocm
+                    if (-not $variant) {
+                        Write-Warn "Unsupported Windows ROCm alias: $rocm. Configured support: ROCm $AMD_ROCM_VERSION."
+                    }
+                    else {
+                        $PYTORCH_WHEEL_VARIANT = $variant
+                        $backendAccepted = $true
+                    }
+                }
             }
-            default { Write-Warn "Enter NVIDIA, CPU, or -." }
+            default { Write-Warn "Enter NVIDIA, AMD, CPU, or -." }
         }
     }
 
@@ -863,6 +1009,7 @@ Write-Host ""
 
 if ($Manage.Torch) {
     Resolve-PyTorchStack
+    Assert-AmdRocmWindowsCompatibility
     if ($PYTHON_VERSION -notmatch '^3\.(10|11|12|13|14)(\.|$)') {
         throw "Python $PYTHON_VERSION is outside the configured 3.10-3.14 range."
     }
@@ -1406,6 +1553,12 @@ if ($metadataRequired) {
                 $PYTORCH_WHEEL_VARIANT = "cu$($installedCudaVersion.Replace('.', ''))"
                 $PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
             }
+            '^rocm:' {
+                $HARDWARE_BACKEND = "rocm"
+                $installedVariant = ($PYTORCH_FULL_VERSION -split '\+', 2)[1]
+                $PYTORCH_WHEEL_VARIANT = if ($installedVariant -match '^rocm') { $installedVariant } else { "rocm" }
+                $PYTORCH_INDEX_URL = $AMD_ROCM_BASE_URL
+            }
             '^cpu$' {
                 $HARDWARE_BACKEND = "cpu"
                 $PYTORCH_WHEEL_VARIANT = "cpu"
@@ -1433,7 +1586,16 @@ if ($Steps[2]) {
     Write-Header "[2/12] Installing PyTorch and Base Dependencies"
 
     Write-Step "Installing PyTorch ${PYTORCH_FULL_VERSION}..."
-    uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
+    Install-ManagedPyTorchStack
+    if ($HARDWARE_BACKEND -eq "rocm") {
+        if (Test-AmdRocmTorch) {
+            $amdDeviceName = (python -c "import torch; print(torch.cuda.get_device_name(0))" | Select-Object -First 1)
+            Write-Success "AMD ROCm GPU runtime probe: $amdDeviceName"
+        }
+        else {
+            throw "AMD PyTorch installed, but ROCm could not access a supported GPU. Verify Windows 11, driver $AMD_ROCM_REQUIRED_DRIVER, and AMD's supported-hardware matrix."
+        }
+    }
 }
 
 # ============================================================================
@@ -1843,7 +2005,7 @@ if ($Steps[10]) {
 
     if ($Manage.Torch) {
         Invoke-SafeCommand "Enforcing PyTorch $PYTORCH_FULL_VERSION" {
-            uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
+            Install-ManagedPyTorchStack
         } -Optional
     }
     else { Write-Host "   Preserving the installed PyTorch stack" }
@@ -2107,7 +2269,7 @@ if ($Steps[12]) {
     if (-not (Test-PythonImport "import kornia")) {
         Remove-FlashAttention
     }
-    if ((Test-DistributionInstalled "sageattention") -and -not (Test-SageAttention)) {
+    if ($HARDWARE_BACKEND -eq "nvidia" -and (Test-DistributionInstalled "sageattention") -and -not (Test-SageAttention)) {
         Write-Warn "SageAttention failed verification; replacing it with $SAGEATTENTION_FALLBACK_VERSION."
         uv pip uninstall sageattention 2>$null | Out-Null
         Invoke-SafeCommand "Installing SageAttention $SAGEATTENTION_FALLBACK_VERSION fallback" {
@@ -2129,6 +2291,16 @@ if ($Steps[12]) {
     else {
         Write-Warn "The managed PyTorch stack failed its runtime import probe."
         $coreImportFailure = $true
+    }
+    if ($HARDWARE_BACKEND -eq "rocm") {
+        if (Test-AmdRocmTorch) {
+            $amdDeviceName = (python -c "import torch; print(torch.cuda.get_device_name(0))" | Select-Object -First 1)
+            Write-Success "AMD ROCm GPU runtime: $amdDeviceName"
+        }
+        else {
+            Write-Warn "PyTorch reports ROCm, but the HIP runtime cannot access a supported AMD GPU."
+            $coreImportFailure = $true
+        }
     }
     if (Test-PythonImport "import kornia") {
         Write-Success "Kornia import"

@@ -8,7 +8,7 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 - **Interactive Prompts**: Collects ComfyUI version, optional managed frontend version, and alias name at runtime
 - **Version Control**: Pin specific versions of ComfyUI, PyTorch, NumPy, Transformers, and other critical packages
 - **Optional Frontend Pinning**: Pin a frontend per launcher or preserve a custom/existing frontend package
-- **GPU Acceleration**: Supports CUDA 13.0, CUDA 12.8, CUDA 12.6, ROCm 7.1, and CPU-only installations
+- **GPU Acceleration**: Supports CUDA 13.0, CUDA 12.8, CUDA 12.6, Linux ROCm 7.1, native Windows ROCm 7.2.1, and CPU-only installations
 - **Performance Optimization**: Verifies exact Flash Attention wheels and builds SageAttention only with a matching CUDA toolchain
 - **Custom Node Collection**: Automatically clones and configures 51 popular custom nodes
 - **Lowercase Cloning**: Clones custom nodes with lowercase directory names to match ComfyUI-Manager convention
@@ -27,14 +27,15 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 - **Operating System**: Linux (Ubuntu, Debian, Fedora, Arch, openSUSE, etc.)
 - **Permissions**: Sudo access for installing system dependencies
 - **Disk Space**: ~10-20GB for full installation (varies with custom nodes)
-- **GPU** (optional): NVIDIA GPU with CUDA support for acceleration features
+- **GPU** (optional): NVIDIA GPU with CUDA support or an AMD GPU supported by the configured ROCm release
 - **Git**: For cloning repositories
 
 ### Windows
 - **Operating System**: Windows 10 or Windows 11
 - **PowerShell**: Version 5.1+ (included with Windows 10/11) or PowerShell 7+
 - **Disk Space**: ~10-20GB for full installation
-- **GPU** (optional): NVIDIA GPU with CUDA support for acceleration features
+- **GPU** (optional): NVIDIA GPU with CUDA support, or an AMD GPU/APU in AMD's Windows ROCm support matrix
+- **AMD ROCm**: Windows 11, Python 3.12, and AMD Software: PyTorch on Windows Edition driver 26.2.2 are required for ROCm 7.2.1
 - **Git**: Git for Windows installed and in PATH ([download](https://git-scm.com/download/win))
 - **Visual Studio Build Tools** (optional): Used only for the toolchain-gated SageAttention 2.2.0 build; SageAttention 1.0.6 is the fallback
 
@@ -97,13 +98,13 @@ PYTORCH_WHEEL_VARIANT="cu128"     # CUDA, ROCm, or CPU wheel variant
 
 The installers derive the wheel index URL and the matching TorchVision and TorchAudio versions automatically. Users do not need to look up or configure companion-package versions. Unsupported PyTorch releases stop with a clear message rather than installing a potentially ABI-incompatible stack.
 
-> **Windows equivalent:** `$PYTORCH_VERSION = "2.9.1"` and `$PYTORCH_WHEEL_VARIANT = "cu128"`.
+> **Windows equivalent:** `$PYTORCH_VERSION = "2.9.1"` with `$PYTORCH_WHEEL_VARIANT = "cu128"` for NVIDIA or `"rocm7.2.1"` for a supported AMD GPU/APU.
 
 Current post-2.9 compatibility and wheel availability:
 
 | PyTorch | TorchVision | TorchAudio | Linux variants | Windows variants |
 | --- | --- | --- | --- | --- |
-| `2.9.1` | `0.24.1` | `2.9.1` | `cu126`, `cu128`, `cu130`, `cpu` | `cu126`, `cu128`, `cu130`, `cpu` |
+| `2.9.1` | `0.24.1` | `2.9.1` | `cu126`, `cu128`, `cu130`, `cpu` | `cu126`, `cu128`, `cu130`, `rocm7.2.1`, `cpu` |
 | `2.10.0` | `0.25.0` | `2.10.0` | `cu126`, `cu128`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu128`, `cu130`, `cpu` |
 | `2.11.0` | `0.26.0` | `2.11.0` | `cu126`, `cu128`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu128`, `cu130`, `cpu` |
 | `2.12.0` | `0.27.0` | `2.11.0` | `cu126`, `cu130`, `rocm7.1`, `cpu` | `cu126`, `cu130`, `cpu` |
@@ -114,12 +115,13 @@ TorchAudio `2.11.0` is its final release and is explicitly forward-compatible wi
 
 **Available wheel channels**:
 
-The platform split follows the [official PyTorch installation guidance](https://pytorch.org/get-started/locally/): ROCm wheels are Linux-only, while Windows supports CUDA and CPU.
+Linux ROCm uses the PyTorch wheel index. Native Windows ROCm uses AMD's official SDK and framework wheels from `repo.radeon.com`, which the PowerShell installer resolves separately from the NVIDIA/CPU indexes.
 
 - **CUDA 13.0**: `cu130` (latest)
 - **CUDA 12.8**: `cu128` (default)
 - **CUDA 12.6**: `cu126`
-- **ROCm 7.1**: `rocm7.1` (AMD GPUs, Linux only)
+- **ROCm 7.1**: `rocm7.1` (AMD GPUs on Linux)
+- **ROCm 7.2.1**: `rocm7.2.1` (supported AMD GPUs/APUs on Windows 11)
 - **CPU only**: `cpu` (no GPU)
 
 Example CUDA 13.0 configuration:
@@ -127,10 +129,18 @@ Example CUDA 13.0 configuration:
 PYTORCH_WHEEL_VARIANT="cu130"
 ```
 
-Example ROCm 7.1 configuration (AMD GPUs):
+Example Linux ROCm 7.1 configuration (AMD GPUs):
 ```bash
 PYTORCH_WHEEL_VARIANT="rocm7.1"
 ```
+
+Example native Windows ROCm 7.2.1 configuration:
+```powershell
+$PYTORCH_VERSION = "2.9.1"
+$PYTORCH_WHEEL_VARIANT = "rocm7.2.1"
+```
+
+The Windows installer validates Windows 11 and Python 3.12, installs the [official AMD ROCm 7.2.1 SDK and PyTorch wheels](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html), disables NVIDIA-only Nunchaku and attention packages, and verifies a real HIP tensor operation. Install [AMD driver 26.2.2](https://www.amd.com/en/resources/support-articles/release-notes/RN-AMDGPU-WINDOWS-PYTORCH-7-2-1.html) first and confirm the GPU or APU appears in AMD's [Radeon](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityrad/windows/windows_compatibility.html) or [Ryzen](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityryz/windows/windows_compatibility.html) support matrix.
 
 Example CPU configuration:
 ```bash
@@ -172,7 +182,7 @@ Mode [E]:
 
 The folder name is derived automatically: `0.28.0` becomes `ComfyUI_0.28.0`. An empty alias prompt checks existing profiles and launcher files, then suggests the first free name in `comfy`, `comfy1`, `comfy2`, and so on.
 
-Advanced hardware selection accepts NVIDIA, AMD/ROCm, CPU, or `-` on Linux. NVIDIA then accepts CUDA aliases such as `13`, `13.0`, and `cu130`; AMD accepts configured ROCm aliases such as `7.1` and `rocm7.1`. Windows exposes NVIDIA and CPU only and re-prompts with an explanation if ROCm is entered. PyTorch shorthand such as `2.9` is normalized to the newest configured patch (`2.9.1`). The platform, Python, PyTorch, and backend combination is validated before any selected work starts.
+Advanced hardware selection accepts NVIDIA, AMD/ROCm, CPU, or `-` on both platforms. NVIDIA accepts CUDA aliases such as `13`, `13.0`, and `cu130`. Linux AMD accepts configured ROCm aliases such as `7.1` and `rocm7.1`; Windows AMD accepts `7.2`, `7.2.1`, and `rocm7.2.1`. PyTorch shorthand such as `2.9` is normalized to the newest configured patch (`2.9.1`). The platform, Python, PyTorch, and backend combination is validated before any selected work starts.
 
 After every successful Easy or Advanced run, the installer asks `Save successful choices as new defaults? (y/N)`. Only managed answers whose related selected work succeeded are eligible. `-` answers and values for unselected steps keep their previous defaults. Easy saves only eligible ComfyUI, frontend, and alias answers. Skip never offers saving. Each installer rewrites only its own marked defaults block through a same-directory temporary candidate, parses the candidate, preserves file metadata, and atomically replaces the original. A read-only file or failed validation only emits a warning; the completed installation remains successful.
 
@@ -255,7 +265,7 @@ ComfyUI-Manager-disabled nodes are preserved. Step 6 recognizes repositories mov
 The script is divided into 12 steps that you can run selectively:
 
 1. **Python Environment** - pyenv, Python version, virtual environment
-2. **PyTorch** - compatible PyTorch, TorchVision, and TorchAudio stack for NVIDIA CUDA, Linux ROCm, or CPU
+2. **PyTorch** - compatible PyTorch, TorchVision, and TorchAudio stack for NVIDIA CUDA, Linux or Windows ROCm, or CPU
 3. **Nunchaku** - stable acceleration library only (optional, supported NVIDIA combinations only)
 4. **Face Recognition** - facexlib, insightface, onnxruntime-gpu, facenet_pytorch
 5. **ComfyUI Core** - ComfyUI base installation and requirements

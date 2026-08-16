@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-08-16
+
+### Added
+- Native Windows AMD ROCm 7.2.1 installation with official AMD SDK and PyTorch wheels, Windows 11 and Python 3.12 validation, preserved-environment detection, and a HIP GPU runtime probe
+
+### Changed
+- Windows Advanced configuration now offers AMD/ROCm alongside NVIDIA and CPU, while disabling NVIDIA-only Nunchaku and attention packages for AMD installations
+
+**Changed files:** `install_comfy_env_win.ps1`, `README.md`, `CHANGELOG.md`, `pyproject.toml`
+
+---
+
 ## [0.13.0] - 2026-08-16
 
 ### Added
