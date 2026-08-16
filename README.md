@@ -9,7 +9,7 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 - **Version Control**: Pin specific versions of ComfyUI, PyTorch, NumPy, Transformers, and other critical packages
 - **Optional Frontend Pinning**: Pin a frontend per launcher or preserve a custom/existing frontend package
 - **GPU Acceleration**: Supports CUDA 13.0, CUDA 12.8, CUDA 12.6, ROCm 7.1, and CPU-only installations
-- **Performance Optimization**: Includes optional Nunchaku, Flash Attention, and Sage Attention
+- **Performance Optimization**: Verifies exact Flash Attention wheels and builds SageAttention only with a matching CUDA toolchain
 - **Custom Node Collection**: Automatically clones and configures 51 popular custom nodes
 - **Lowercase Cloning**: Clones custom nodes with lowercase directory names to match ComfyUI-Manager convention
 - **Selective Installation**: Choose which components to install via interactive menu
@@ -36,7 +36,7 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 - **Disk Space**: ~10-20GB for full installation
 - **GPU** (optional): NVIDIA GPU with CUDA support for acceleration features
 - **Git**: Git for Windows installed and in PATH ([download](https://git-scm.com/download/win))
-- **Visual Studio Build Tools** (optional): Required only if building packages from source (e.g., flash-attn)
+- **Visual Studio Build Tools** (optional): Used only for the toolchain-gated SageAttention 2.2.0 build; SageAttention 1.0.6 is the fallback
 
 ## 🚀 Quick Start
 
@@ -86,7 +86,7 @@ PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"  # pyenv installation directory
 
 > **Windows equivalent:** `$PYTHON_VERSION = "3.12.10"` — venv path defaults to `$BASE_PATH\comfy_env` (e.g. `D:\AI\comfy_env`)
 
-**Recommended Python versions**: 3.10.x, 3.11.x, 3.12.x, 3.13.x, 3.14.x have prebuilt wheels for PyTorch, Nunchaku, and Flash Attention. Other versions will require compilation from source.
+**Configured Python range**: 3.10.x through 3.14.x. Individual binary packages have narrower matrices; notably, stable Nunchaku 1.2.1 provides wheels only for Python 3.10 through 3.13. The installers validate required wheel tags before installation.
 
 ### PyTorch Configuration
 
@@ -113,6 +113,9 @@ Current post-2.9 compatibility and wheel availability:
 TorchAudio `2.11.0` is its final release and is explicitly forward-compatible with newer Torch releases. The installers validate the selected version/channel pair before installation; notably, `cu128` stops at PyTorch `2.11.0`.
 
 **Available wheel channels**:
+
+The platform split follows the [official PyTorch installation guidance](https://pytorch.org/get-started/locally/): ROCm wheels are Linux-only, while Windows supports CUDA and CPU.
+
 - **CUDA 13.0**: `cu130` (latest)
 - **CUDA 12.8**: `cu128` (default)
 - **CUDA 12.6**: `cu126`
@@ -143,39 +146,41 @@ TRANSFORMERS_VERSION="5.3.0"      # Transformers (5.x for Qwen3-VL/Mistral3)
 
 These versions are enforced at the end of installation to override any conflicting dependencies from custom nodes.
 
-### ComfyUI Installation (Interactive)
+### Installer Configuration Modes
 
-When frontend management is enabled (the default), the script prompts for three values:
+Both installers begin with a mode selector:
+
+- **Easy** (default on Enter) asks only for the ComfyUI version, managed frontend version, and launcher name. This is the original three-question workflow.
+- **Advanced** asks for the base path; Python, PyTorch, NumPy, and Transformers versions; hardware backend; ComfyUI and frontend policy; Nunchaku library policy; launcher name, arguments, and frontend pinning; and all five sharing policies.
+- **Skip questions** loads the embedded defaults, prints the resolved configuration, and opens the numbered step selector immediately. For example, choose Skip and enter `9-11` to rerun package enforcement and launcher setup without answering configuration questions.
+
+Every prompt displays its embedded default. Press Enter to accept it. In Advanced mode, enter `-` to skip/ignore management for that setting and keep its installed state: the installer will not install, upgrade, enforce, remove, relink, regenerate, or save it. Dependent steps are labeled unavailable and are removed even when explicitly selected. A preserved base path still uses the embedded path to locate resources but is not saved.
+
+Easy mode keeps the familiar prompts:
 
 ```
-Enter values for this installation (press Enter for defaults):
+Configuration mode:
+  [E]asy (default)
+  [A]dvanced
+  [S]kip questions
 
-  ComfyUI version [0.28.0]:     # → clones/checks out this tag (e.g., v0.28.0)
-  Frontend version [1.45.21]:   # → managed package version
-  Launch alias [comfy]:         # → first available name (comfy, comfy1, comfy2, ...)
+Mode [E]:
+  ComfyUI version [0.28.0]:
+  Frontend version [1.45.21]:
+  Launch alias [comfy]:
 ```
 
-The folder name is derived automatically: version `0.28.0` → `ComfyUI_0.28.0`.
+The folder name is derived automatically: `0.28.0` becomes `ComfyUI_0.28.0`. An empty alias prompt checks existing profiles and launcher files, then suggests the first free name in `comfy`, `comfy1`, `comfy2`, and so on.
 
-If the alias prompt is left empty, the installer checks existing shell/profile definitions and generated launcher files, then uses the first available name in the sequence `comfy`, `comfy1`, `comfy2`, etc. An explicitly entered alias is always used unchanged.
+Advanced hardware selection accepts NVIDIA, AMD/ROCm, CPU, or `-` on Linux. NVIDIA then accepts CUDA aliases such as `13`, `13.0`, and `cu130`; AMD accepts configured ROCm aliases such as `7.1` and `rocm7.1`. Windows exposes NVIDIA and CPU only and re-prompts with an explanation if ROCm is entered. PyTorch shorthand such as `2.9` is normalized to the newest configured patch (`2.9.1`). The platform, Python, PyTorch, and backend combination is validated before any selected work starts.
 
-Static configuration (Python, PyTorch, NumPy, Transformers, launch arguments) stays at the top of the script and rarely changes.
-Set `INSTALL_COMFYUI_FRONTEND=false` (`$false` on Windows) to skip the frontend-version prompt and prevent every installer and launcher path from installing, upgrading, downgrading, or enforcing `comfyui-frontend-package`. This includes frontend pins pulled from ComfyUI or custom-node requirements.
-Set `PIN_FRONTEND_VERSION_IN_ALIAS=false` (`$false` on Windows) to keep the generated shell or PowerShell profile alias from reinstalling the managed frontend on every launch. Installation-time enforcement and generated launcher scripts remain enabled when `INSTALL_COMFYUI_FRONTEND=true`.
+After every successful Easy or Advanced run, the installer asks `Save successful choices as new defaults? (y/N)`. Only managed answers whose related selected work succeeded are eligible. `-` answers and values for unselected steps keep their previous defaults. Easy saves only eligible ComfyUI, frontend, and alias answers. Skip never offers saving. Each installer rewrites only its own marked defaults block through a same-directory temporary candidate, parses the candidate, preserves file metadata, and atomically replaces the original. A read-only file or failed validation only emits a warning; the completed installation remains successful.
 
-When sharing is enabled for a new installation, files introduced by the fresh ComfyUI checkout are copied into the shared directory only when the same relative path does not already exist. Existing shared files are never overwritten. The checkout folder is then removed and replaced by the symlink or junction. This also repairs a previous incomplete sharing setup when the local folder still contains only pristine checkout files. If an existing local installation contains modified, untracked, or ignored files while the shared directory also contains data, both directories are preserved and the installer asks you to merge them manually.
+Frontend management and launcher pinning are separate. Disabling or preserving frontend management never uninstalls an existing package. Launcher files and profile functions pin the frontend only when both frontend management and launcher pinning are enabled. Linux launcher creation is entirely part of step 11, so selecting only steps `9-10` cannot rewrite it.
 
-**Multiple ComfyUI Installations**:
-Simply run the script again with different values at the prompts:
-```
-# First run:   version 0.28.0, alias comfy    → /mnt/data/AI/ComfyUI_0.28.0
-# Second run:  version 0.19.0, alias comfy1   → /mnt/data/AI/ComfyUI_0.19.0
-# Third run:   version 0.18.2, alias comfy2   → /mnt/data/AI/ComfyUI_0.18.2
-```
+When sharing is enabled for a new installation, pristine checkout files are copied into an empty or missing shared location without overwriting existing shared files. A `-` sharing answer leaves the corresponding filesystem entry untouched. Existing divergent local and shared data are preserved for manual merging.
 
-Each installation gets its own alias and launcher script (`start_comfy2.sh` on Linux or `comfy2.bat`/`comfy2.ps1` on Windows).
-All installations share the same venv. The five directory-sharing settings below determine whether models, input, output, user data, and custom nodes are shared or local to each installation.
-The `envact` alias is always shared (one venv for all installs).
+**Multiple ComfyUI installations:** run the installer again with another version and alias. All installations share the configured virtual environment; sharing choices decide whether models, input, output, user data, and custom nodes are shared or local.
 
 ### Symlink / Junction Configuration
 
@@ -235,25 +240,32 @@ COMFYUI_LAUNCH_ARGS="--multi-user --disable-pinned-memory"
 
 `COMFYUI_LAUNCH_ARGS` is appended after `python main.py` in every generated alias and launcher. Set it to an empty string to launch without predefined flags. Arguments supplied when invoking a launcher are appended after these configured defaults.
 
-Set to `false` to skip Nunchaku installation if you don't have an NVIDIA GPU or don't need this optimization.
+`INSTALL_NUNCHAKU` controls only step 3's Nunchaku Python/CUDA acceleration library. The installers pin stable [Nunchaku `1.2.1`](https://github.com/nunchaku-ai/nunchaku/releases/tag/v1.2.1), derive its `cu12.8` or `cu13.0` wheel tag from the PyTorch channel, validate OS/Python/PyTorch/CUDA support, and install only the official GitHub wheel. They never fall back to the unrelated PyPI package and never clone or install the `ComfyUI-Nunchaku` custom node. ROCm and CPU configurations mark step 3 unavailable; explicitly selecting it prints a clear warning and leaves it disabled.
+
+Step 8 treats compiled attention extensions as ABI-specific. Linux installs Flash Attention only when the exact official upstream wheel URL exists for the configured Python, Torch, and CUDA-12 stack, forces replacement of an older same-version wheel, and verifies both Flash Attention and Kornia imports. Windows removes Flash Attention because upstream does not publish a matching official Windows wheel. When Flash Attention is unavailable or broken, it is removed so ComfyUI can use PyTorch attention instead of failing during Kornia import.
+
+SageAttention 2.2.0 is built from its official source only after the installer verifies a matching Torch/CUDA toolkit, `nvcc`, compiler, Ninja, supported GPU architecture, temporary disk space, and memory. A failed preflight, build, or CUDA smoke test falls back to pinned SageAttention 1.0.6.
+
+ComfyUI-Manager-disabled nodes are preserved. Step 6 recognizes repositories moved into `custom_nodes/.disabled/<node>` and does not clone a second active copy. Step 7 never installs requirements from that quarantine folder or from legacy top-level `<node>.disabled` directories.
 
 ## 📦 What Gets Installed
 
 ### Installation Steps
 
-The script is divided into 11 steps that you can run selectively:
+The script is divided into 12 steps that you can run selectively:
 
 1. **Python Environment** - pyenv, Python version, virtual environment
-2. **PyTorch** - PyTorch, torchvision, torchaudio with CUDA/CPU support
-3. **Nunchaku** - Acceleration library (optional, NVIDIA GPU only)
+2. **PyTorch** - compatible PyTorch, TorchVision, and TorchAudio stack for NVIDIA CUDA, Linux ROCm, or CPU
+3. **Nunchaku** - stable acceleration library only (optional, supported NVIDIA combinations only)
 4. **Face Recognition** - facexlib, insightface, onnxruntime-gpu, facenet_pytorch
 5. **ComfyUI Core** - ComfyUI base installation and requirements
 6. **Custom Nodes** - 51 popular custom nodes (see list below)
-7. **Custom Node Dependencies** - Install requirements for all custom nodes
-8. **Performance Libraries** - llama-cpp-python, flash-attn, sageattention
-9. **Upgrade/Pin Packages** - Upgrade specific packages to latest compatible versions
+7. **Custom Node Dependencies** - Install requirements for active custom nodes; Manager-disabled and legacy `.disabled` nodes are skipped
+8. **Performance Libraries** - llama-cpp-python, verified official Flash Attention wheels, and SageAttention build-or-fallback
+9. **Upgrade/Pin Packages** - Upgrade selected direct packages without broadly upgrading already-compatible transitive runtime dependencies
 10. **Enforce Versions** - Force exact versions of PyTorch, NumPy, Transformers, ComfyUI Frontend
 11. **Shell Aliases** - Add user-chosen launch alias and `envact` alias to shell config
+12. **Compatibility Audit/Repair** - Run `uv pip check`, apply conservative directional repairs, verify core imports, and report mutually incompatible custom-node requirements without forcing one legacy stack over the managed runtime
 
 ### Custom Nodes Included (51 nodes)
 
@@ -332,30 +344,29 @@ The script is divided into 11 steps that you can run selectively:
 
 ### Interactive Installation
 
-Run the script and select steps interactively:
+Run the installer, choose Easy, Advanced, or Skip, then select numbered work:
 
 ```bash
 ./install_comfy_env.sh
 ```
 
-You'll see a menu:
-```
-Select installation steps (numbers, ranges, or 'a' for all — e.g., 6-10 or 1 5 6-8):
-  1) Python environment (pyenv + venv)
-  2) PyTorch and base dependencies
-  ...
-  a) All steps (default)
-
-Your selection [a]:
+```powershell
+.\install_comfy_env_win.ps1
 ```
 
-**Examples**:
-- `a` - Install everything (default)
-- `1 2 5` - Only setup Python, PyTorch, and ComfyUI core
-- `6-7` - Only clone and setup custom nodes (if you already have ComfyUI)
-- `5 9-11` - ComfyUI core + upgrade/pin/aliases
-- `10` - Only enforce package versions (useful after manual package changes)
+The step selector accepts individual numbers, spaces or commas, inclusive ranges, and `a` for all available steps.
 
+**Examples:**
+
+- Easy + Enter keeps the original three-question defaults, then `a` installs all available work.
+- Skip + `9-11` proceeds directly to upgrade/pin, final enforcement, and launcher setup.
+- `1 2 5` sets up Python, PyTorch, and ComfyUI core.
+- `6-7` clones custom nodes and installs their dependencies for an existing checkout.
+- `10` only re-enforces settings that are managed; values entered as `-` stay untouched.
+- `12` audits declared dependencies and runtime imports, repairs the known-safe runtime-package intersection, and reports irreconcilable custom-node constraints.
+- Selecting an unavailable dependent step prints its reason and removes it.
+
+When step 1 is omitted, package work requires the configured virtual environment to exist. Steps that operate on a checkout likewise require step 5 or an existing configured ComfyUI directory. These checks run before confirmation.
 ### Running ComfyUI
 
 After installation, you have several options (examples assume alias `comfy2` and version `0.19.0`):
@@ -417,7 +428,7 @@ source /mnt/data/AI/comfy_env/bin/activate
 
 ## 🔧 Customizing Custom Nodes
 
-To add/remove custom nodes, edit the `[6/10] Clone Custom Nodes` section around line 550:
+To add/remove custom nodes, edit the `[6/12] Clone Custom Nodes` section around line 550:
 
 ```bash
 # Add your custom node:
@@ -452,21 +463,18 @@ libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-d
 sudo dnf install make gcc patch zlib-devel bzip2 bzip2-devel readline-devel sqlite sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel gdbm-libs libnsl2
 ```
 
-### Nunchaku or Flash Attention Installation Fails
+### Nunchaku, Flash Attention, or SageAttention Is Unavailable
 
-These require:
-- NVIDIA GPU
-- CUDA 12.6+ or compatible version
-- Prebuilt wheels for your Python version
+Nunchaku and the compiled attention accelerators require an NVIDIA configuration with an exact compatible Python, Torch, CUDA, and platform combination. Missing Flash Attention is not fatal: the installers remove an ABI-incompatible extension and ComfyUI uses PyTorch attention. SageAttention falls back to version 1.0.6 when version 2.2.0 cannot be built and smoke-tested safely.
 
-If you don't have an NVIDIA GPU, set `INSTALL_NUNCHAKU=false` and skip step 3.
+If `bz2` or another Python standard-library module cannot import, install the operating system development package and rebuild that Python version through pyenv. The installer reports this condition and never creates a library symlink workaround.
 
 ### Custom Node Dependencies Conflict
 
-If a custom node installs incompatible package versions, run step 10 to enforce configured versions:
+Run step 12 after installing custom-node dependencies. It uses `uv pip check`, repairs only known shared intersections, validates ComfyUI core imports, and lists conflicts it intentionally leaves unresolved. When installed generations disagree—for example, legacy `inference` packages versus current `inference-cli`, Hugging Face, or typing libraries—the audit preserves the current managed runtime instead of minimizing the warning count with unsafe downgrades. Step 10 remains available to re-enforce explicitly managed package versions.
 
 ```bash
-./install_comfy_env.sh  # Select step 10 only
+./install_comfy_env.sh  # Select step 12, or 10-12
 ```
 
 ### Shell Aliases Not Working
@@ -511,10 +519,7 @@ Close and reopen PowerShell. If still not found, ensure these are in your PATH:
 
 ### Windows: Flash Attention Not Available
 
-Flash Attention rarely has prebuilt Windows wheels. You can either:
-- Skip it (it's optional — ComfyUI works fine without it)
-- Install Visual Studio Build Tools and compile from source
-- Use Sage Attention as an alternative
+The Windows installer does not use community Flash Attention wheels or attempt an automatic source build. It removes an incompatible installation and uses PyTorch attention. SageAttention 2.2.0 remains available when a matching CUDA and Visual C++ build toolchain passes preflight; otherwise the installer uses SageAttention 1.0.6.
 
 ### Out of Disk Space
 

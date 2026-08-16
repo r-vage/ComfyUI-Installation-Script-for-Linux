@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-16
+
+### Added
+- Easy, Advanced, and Skip configuration modes with context-aware `-` preservation and selective embedded-default saving
+- NVIDIA, Linux ROCm, and CPU backend selection with validated PyTorch companion-package resolution
+- Step 12 compatibility audit with `uv pip check`, conservative directional repair for known shared intersections, core runtime import probes, and explicit unresolved-conflict reporting
+- Toolchain-gated SageAttention 2.2.0 builds with a verified 1.0.6 fallback
+
+### Changed
+- ComfyUI-Manager nodes under `custom_nodes/.disabled/` and legacy `*.disabled` directories are preserved, excluded from cloning, and skipped during dependency installation
+- Flash Attention now installs only an exact official upstream Linux wheel, is force-replaced and import-tested, and is removed when unavailable or ABI-incompatible; Windows no longer uses community wheels or an automatic source build
+- Package upgrade work uses package-scoped uv upgrades so ultralytics and GGUF updates preserve compatible Filelock, OpenCV, Packaging, AV, protobuf, inference, tokenizers, and related runtime stacks
+- Compatibility repair prioritizes the managed runtime when legacy inference packages conflict with current inference-cli, Hugging Face, Pillow, Aiohttp, Click, or typing requirements
+- Installation progress and selection now consistently cover 12 steps while preserving launcher behavior as step 11
+
+### Fixed
+- Prevented a Flash Attention wheel compiled for an older Torch ABI from remaining installed after a Torch upgrade and breaking Kornia and ComfyUI core imports
+- Existing non-Git custom-node directories are reported as unmanaged instead of receiving a failing clone attempt
+- Audit-only and other partial-run summaries report versions from the configured venv, mark untouched ComfyUI checkouts, and omit nonexistent launcher paths
+- Step 9 keeps `nvidia-ml-py` below 13 because the installed inference packages require the 12.x API
+- Windows step 9 now writes its managed constraint file before using it
+
+**Changed files:** `install_comfy_env.sh`, `install_comfy_env_win.ps1`, `README.md`, `CHANGELOG.md`, `pyproject.toml`
+
+---
+
 ## [0.12.2] - 2026-08-07
 
 ### Added

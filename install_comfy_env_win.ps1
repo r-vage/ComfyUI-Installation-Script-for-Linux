@@ -17,20 +17,76 @@
 $ErrorActionPreference = "Stop"
 
 # ============================================
-# Configuration Variables - Adjust as needed
+# Embedded Defaults
 # ============================================
+# Only this marked block is rewritten after a successful run.
+# BEGIN COMFYUI INSTALLER DEFAULTS
+$BASE_PATH = "D:\AI"
+$PYTHON_VERSION = "3.12.10"
+$PYTORCH_VERSION = "2.9.1"
+$PYTORCH_WHEEL_VARIANT = "cu128"
+$NUMPY_VERSION = "2.2.6"
+$TRANSFORMERS_VERSION = "4.57.3"
+$DEFAULT_COMFYUI_VERSION = "0.28.0"
+$DEFAULT_FRONTEND_VERSION = "1.45.21"
+$DEFAULT_ALIAS = "comfy"
+$COMFYUI_LAUNCH_ARGS = "--disable-pinned-memory"
+$SYMLINK_MODELS = $true
+$SYMLINK_INPUT = $true
+$SYMLINK_OUTPUT = $true
+$SYMLINK_USER = $true
+$SYMLINK_CUSTOM_NODES = $true
+$INSTALL_NUNCHAKU = $false
+$INSTALL_COMFYUI_FRONTEND = $true
+$PIN_FRONTEND_VERSION_IN_ALIAS = $false
+# END COMFYUI INSTALLER DEFAULTS
 
-# Base directory configuration
-# All paths will be derived from this base path
-$BASE_PATH = "D:\AI"                          # Parent directory for ComfyUI, venv, models, input, output, user, custom_nodes
+$NUNCHAKU_VERSION = "1.2.1"
+$NUNCHAKU_SUPPORTED_PYTHON_TAGS = @("cp310", "cp311", "cp312", "cp313")
+$FLASH_ATTN_VERSION = "2.8.3"
+$SAGEATTENTION_VERSION = "2.2.0"
+$SAGEATTENTION_FALLBACK_VERSION = "1.0.6"
+$InstallerScriptPath = $PSCommandPath
 
-# Recommended Python versions: 3.10.x, 3.11.x, 3.12.x, 3.13.x, 3.14.x
-# These versions have prebuilt wheels for PyTorch, nunchaku, and flash-attn
-$PYTHON_VERSION = "3.12.10"                   # Python version to install via pyenv-win
+$Embedded = @{
+    BasePath = $BASE_PATH
+    Python = $PYTHON_VERSION
+    Torch = $PYTORCH_VERSION
+    Variant = $PYTORCH_WHEEL_VARIANT
+    Numpy = $NUMPY_VERSION
+    Transformers = $TRANSFORMERS_VERSION
+    Comfy = $DEFAULT_COMFYUI_VERSION
+    Frontend = $DEFAULT_FRONTEND_VERSION
+    Alias = $DEFAULT_ALIAS
+    Args = $COMFYUI_LAUNCH_ARGS
+    Models = $SYMLINK_MODELS
+    Input = $SYMLINK_INPUT
+    Output = $SYMLINK_OUTPUT
+    User = $SYMLINK_USER
+    Nodes = $SYMLINK_CUSTOM_NODES
+    Nunchaku = $INSTALL_NUNCHAKU
+    ManageFrontend = $INSTALL_COMFYUI_FRONTEND
+    PinFrontend = $PIN_FRONTEND_VERSION_IN_ALIAS
+}
 
-# PyTorch version configuration
-$PYTORCH_VERSION = "2.9.1"                    # Base PyTorch version
-$PYTORCH_WHEEL_VARIANT = "cu128"              # Wheel variant (cu126, cu128, cu130, cpu)
+$Manage = @{
+    BasePath = $true
+    Python = $true
+    Torch = $true
+    Numpy = $true
+    Transformers = $true
+    Comfy = $true
+    Nunchaku = $true
+    Frontend = $true
+    Launcher = $true
+    Models = $true
+    Input = $true
+    Output = $true
+    User = $true
+    Nodes = $true
+}
+$CONFIG_MODE = "easy"
+$HARDWARE_BACKEND = ""
 
 $PYTORCH_COMPATIBILITY = @{
     "2.13.0" = @{ TorchVision = "0.28.0"; TorchAudio = "2.11.0"; Variants = @("cu126", "cu130", "cpu") }
@@ -45,45 +101,53 @@ $PYTORCH_COMPATIBILITY = @{
     "2.7.0" = @{ TorchVision = "0.22.0"; TorchAudio = "2.7.0"; Variants = @("cu126", "cu128", "cpu") }
     "2.6.0" = @{ TorchVision = "0.21.0"; TorchAudio = "2.6.0"; Variants = @("cu126", "cpu") }
 }
-if (-not $PYTORCH_COMPATIBILITY.ContainsKey($PYTORCH_VERSION)) {
-    throw "Unsupported PYTORCH_VERSION: $PYTORCH_VERSION. Add its compatibility data to the PyTorch version map."
+
+function Normalize-PyTorchVersion {
+    param([string]$Version)
+    $patches = @{
+        "2.13" = "2.13.0"; "2.12" = "2.12.1"; "2.11" = "2.11.0"
+        "2.10" = "2.10.0"; "2.9" = "2.9.1"; "2.8" = "2.8.0"
+        "2.7" = "2.7.1"; "2.6" = "2.6.0"
+    }
+    if ($patches.ContainsKey($Version)) { return $patches[$Version] }
+    return $Version
 }
 
-$PYTORCH_STACK = $PYTORCH_COMPATIBILITY[$PYTORCH_VERSION]
-if ($PYTORCH_STACK.Variants -notcontains $PYTORCH_WHEEL_VARIANT) {
-    throw "PyTorch $PYTORCH_VERSION is not available for wheel variant $PYTORCH_WHEEL_VARIANT. Supported variants: $($PYTORCH_STACK.Variants -join ', ')"
+function Resolve-PyTorchStack {
+    $script:PYTORCH_VERSION = Normalize-PyTorchVersion $PYTORCH_VERSION
+    if (-not $PYTORCH_COMPATIBILITY.ContainsKey($PYTORCH_VERSION)) {
+        throw "Unsupported PyTorch version: $PYTORCH_VERSION"
+    }
+    $stack = $PYTORCH_COMPATIBILITY[$PYTORCH_VERSION]
+    if ($stack.Variants -notcontains $PYTORCH_WHEEL_VARIANT) {
+        throw "PyTorch $PYTORCH_VERSION is not available for $PYTORCH_WHEEL_VARIANT on Windows. Supported variants: $($stack.Variants -join ', ')"
+    }
+    $script:PYTORCH_MAJOR_MINOR = ($PYTORCH_VERSION -split '\.')[0..1] -join '.'
+    $script:TORCHVISION_VERSION = $stack.TorchVision
+    $script:TORCHAUDIO_VERSION = $stack.TorchAudio
+    $script:PYTORCH_FULL_VERSION = "$PYTORCH_VERSION+$PYTORCH_WHEEL_VARIANT"
+    $script:TORCHVISION_FULL_VERSION = "$TORCHVISION_VERSION+$PYTORCH_WHEEL_VARIANT"
+    $script:TORCHAUDIO_FULL_VERSION = "$TORCHAUDIO_VERSION+$PYTORCH_WHEEL_VARIANT"
+    $script:PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
+    $script:HARDWARE_BACKEND = if ($PYTORCH_WHEEL_VARIANT -eq "cpu") { "cpu" } else { "nvidia" }
+
+    switch ($PYTORCH_WHEEL_VARIANT) {
+        "cu128" {
+            $script:NUNCHAKU_CUDA_VARIANT = "cu12.8"
+            $script:NUNCHAKU_SUPPORTED_TORCH_VERSIONS = @("2.8", "2.9", "2.10", "2.11")
+        }
+        "cu130" {
+            $script:NUNCHAKU_CUDA_VARIANT = "cu13.0"
+            $script:NUNCHAKU_SUPPORTED_TORCH_VERSIONS = @("2.9", "2.10", "2.11")
+        }
+        default {
+            $script:NUNCHAKU_CUDA_VARIANT = ""
+            $script:NUNCHAKU_SUPPORTED_TORCH_VERSIONS = @()
+        }
+    }
 }
 
-$PYTORCH_MAJOR_MINOR = ($PYTORCH_VERSION -split '\.')[0..1] -join '.'
-$TORCHVISION_VERSION = $PYTORCH_STACK.TorchVision
-$TORCHAUDIO_VERSION = $PYTORCH_STACK.TorchAudio
-$PYTORCH_FULL_VERSION = "$PYTORCH_VERSION+$PYTORCH_WHEEL_VARIANT"
-$TORCHVISION_FULL_VERSION = "$TORCHVISION_VERSION+$PYTORCH_WHEEL_VARIANT"
-$TORCHAUDIO_FULL_VERSION = "$TORCHAUDIO_VERSION+$PYTORCH_WHEEL_VARIANT"
-$PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
-
-# Critical package versions (enforced at end to override custom node dependencies)
-$NUMPY_VERSION = "2.2.6"                      # NumPy version (2.2.x compatible with PyTorch 2.9+)
-$TRANSFORMERS_VERSION = "4.57.3"              # Transformers version
-$COMFYUI_FRONTEND_VERSION = "1.45.21"         # Default ComfyUI frontend version (overridden by interactive prompt)
-
-# ComfyUI installation defaults (overridden by interactive prompts below)
-$DEFAULT_COMFYUI_VERSION = "0.28.0"            # Default ComfyUI version (numeric, e.g., 0.28.0)
-$DEFAULT_FRONTEND_VERSION = $COMFYUI_FRONTEND_VERSION  # Default frontend version
-$DEFAULT_ALIAS = "comfy"                       # Alias base; auto-increments when the prompt is left empty
-$COMFYUI_LAUNCH_ARGS = "--disable-pinned-memory"  # Arguments appended to python main.py
-
-# Shared-directory configuration (set individual paths to $false to keep them local)
-$SYMLINK_MODELS = $true                       # Share models across ComfyUI installations
-$SYMLINK_INPUT = $true                        # Share input across ComfyUI installations
-$SYMLINK_OUTPUT = $true                       # Share output across ComfyUI installations
-$SYMLINK_USER = $true                         # Share user settings, workflows, and templates
-$SYMLINK_CUSTOM_NODES = $true                 # Share custom_nodes across ComfyUI installations
-
-# Optional features
-$INSTALL_NUNCHAKU = $false                    # Set to $false to skip Nunchaku (NVIDIA GPU required)
-$INSTALL_COMFYUI_FRONTEND = $true             # Set to $false to preserve a custom/existing frontend package
-$PIN_FRONTEND_VERSION_IN_ALIAS = $false        # Set to $false to keep the PowerShell alias from reinstalling the frontend on launch
+Resolve-PyTorchStack
 
 # ============================================
 # Derived Paths (auto-generated from BASE_PATH)
@@ -153,8 +217,8 @@ function Test-CommandExists {
 function Test-ComfyAliasNameExists {
     param([string]$Candidate)
 
-    if ((Test-Path (Join-Path $COMFYUI_PARENT_DIR "$Candidate.bat")) -or
-        (Test-Path (Join-Path $COMFYUI_PARENT_DIR "$Candidate.ps1"))) {
+    if ((Test-Path (Join-Path $BASE_PATH "$Candidate.bat")) -or
+        (Test-Path (Join-Path $BASE_PATH "$Candidate.ps1"))) {
         return $true
     }
 
@@ -212,36 +276,154 @@ function Invoke-SafeCommand {
     }
 }
 
+function Test-DistributionInstalled {
+    param([string]$Distribution)
+    python -c "import importlib.metadata,sys; importlib.metadata.version(sys.argv[1])" $Distribution 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Remove-FlashAttention {
+    if (Test-DistributionInstalled "flash-attn") {
+        Write-Step "Removing incompatible Flash Attention installation..."
+        uv pip uninstall flash-attn 2>$null | Out-Null
+    }
+}
+
+function Test-PythonImport {
+    param([string]$ImportStatement)
+    python -c $ImportStatement 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Test-SageAttention {
+    $probe = @'
+import importlib.metadata
+import sageattention
+version = importlib.metadata.version("sageattention")
+if version.startswith("2."):
+    import torch
+    from sageattention import sageattn
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable for the SageAttention 2 smoke test")
+    query = torch.randn((1, 4, 128, 64), device="cuda", dtype=torch.float16)
+    sageattn(query, query, query, tensor_layout="HND")
+    torch.cuda.synchronize()
+'@
+    python -c $probe 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
+function Install-SageAttention {
+    param([string]$ConstraintFile)
+
+    $cudaHome = (python -c "from torch.utils.cpp_extension import CUDA_HOME; print(CUDA_HOME or )" 2>$null | Select-Object -First 1)
+    $torchCuda = (python -c "import torch; print(torch.version.cuda or )" 2>$null | Select-Object -First 1)
+    $gpuArch = (python -c "import torch; print(..join(map(str, torch.cuda.get_device_capability()))) if torch.cuda.is_available() else print()" 2>$null | Select-Object -First 1)
+    $nvccPath = if ($cudaHome) { Join-Path $cudaHome "bin\nvcc.exe" } else { $null }
+    $buildReady = $true
+
+    if (-not $nvccPath -or -not (Test-Path $nvccPath)) {
+        Write-Warn "SageAttention $SAGEATTENTION_VERSION build skipped: nvcc was not found in CUDA_HOME."
+        $buildReady = $false
+    }
+    else {
+        $nvccText = (& $nvccPath --version 2>$null) -join "`n"
+        $nvccCuda = if ($nvccText -match "release\s+(\d+\.\d+)") { $Matches[1] } else { "" }
+        if ($nvccCuda -ne $torchCuda) {
+            Write-Warn "SageAttention $SAGEATTENTION_VERSION build skipped: CUDA toolkit $nvccCuda does not match Torch CUDA $torchCuda."
+            $buildReady = $false
+        }
+    }
+    if (@("8.0", "8.6", "8.9", "9.0", "10.0", "12.0", "12.1") -notcontains $gpuArch) {
+        Write-Warn "SageAttention $SAGEATTENTION_VERSION build skipped: unsupported or unavailable GPU architecture $gpuArch."
+        $buildReady = $false
+    }
+    if (-not (Test-CommandExists "cl") -or -not (Test-CommandExists "ninja")) {
+        Write-Warn "SageAttention $SAGEATTENTION_VERSION build skipped: Visual C++ and ninja are required."
+        $buildReady = $false
+    }
+    try {
+        $tempDrive = New-Object System.IO.DriveInfo((Get-Item $env:TEMP).PSDrive.Name)
+        if ($tempDrive.AvailableFreeSpace -lt 10GB) {
+            Write-Warn "SageAttention $SAGEATTENTION_VERSION build skipped: at least 10 GiB of temporary disk space is required."
+            $buildReady = $false
+        }
+    }
+    catch {
+        Write-Warn "SageAttention build disk-space preflight failed."
+        $buildReady = $false
+    }
+    try {
+        $availableMemory = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory * 1KB
+        if ($availableMemory -lt 16GB) {
+            Write-Warn "SageAttention $SAGEATTENTION_VERSION build skipped: at least 16 GiB of available memory is required."
+            $buildReady = $false
+        }
+    }
+    catch {
+        Write-Warn "SageAttention build memory preflight failed."
+        $buildReady = $false
+    }
+
+    if ($buildReady) {
+        Write-Step "Building SageAttention $SAGEATTENTION_VERSION from the official PyPI source distribution..."
+        uv pip uninstall sageattention 2>$null | Out-Null
+        $oldMaxJobs = $env:MAX_JOBS
+        $oldNvccFlags = $env:NVCC_APPEND_FLAGS
+        try {
+            $env:MAX_JOBS = "4"
+            $env:NVCC_APPEND_FLAGS = "--threads 4"
+            uv pip install --constraint $ConstraintFile --reinstall "sageattention==$SAGEATTENTION_VERSION" --no-binary sageattention --no-build-isolation
+            if ($LASTEXITCODE -eq 0 -and (Test-SageAttention)) {
+                Write-Success "SageAttention $SAGEATTENTION_VERSION built and passed its CUDA smoke test"
+                return
+            }
+        }
+        finally {
+            $env:MAX_JOBS = $oldMaxJobs
+            $env:NVCC_APPEND_FLAGS = $oldNvccFlags
+        }
+        Write-Warn "SageAttention $SAGEATTENTION_VERSION build or smoke test failed; using the Triton fallback."
+        uv pip uninstall sageattention 2>$null | Out-Null
+    }
+
+    uv pip install --constraint $ConstraintFile --reinstall "sageattention==$SAGEATTENTION_FALLBACK_VERSION"
+    if ($LASTEXITCODE -eq 0 -and (Test-SageAttention)) {
+        Write-Success "SageAttention $SAGEATTENTION_FALLBACK_VERSION installed and import-verified"
+    }
+    else {
+        Write-Warn "SageAttention could not be installed or verified (optional)"
+    }
+}
+
 function Install-UvRequirements {
     param(
         [string]$RequirementsFile,
         [string]$ConstraintFile
     )
 
-    $installRequirements = $RequirementsFile
-    $filteredRequirements = $null
+    $filteredRequirements = [System.IO.Path]::GetTempFileName()
     try {
-        if (-not $INSTALL_COMFYUI_FRONTEND) {
-            $filteredRequirements = [System.IO.Path]::GetTempFileName()
-            $filteredLines = @(
-                Get-Content $RequirementsFile | Where-Object {
-                    $_ -notmatch '^\s*comfyui[-_.]frontend[-_.]package(?:[^A-Za-z0-9_-].*)?$'
-                }
-            )
-            [System.IO.File]::WriteAllLines($filteredRequirements, [string[]]$filteredLines)
-            $installRequirements = $filteredRequirements
-        }
+        $filteredLines = @(Get-Content $RequirementsFile | Where-Object {
+            $line = $_
+            if ((-not $Manage.Frontend -or -not $INSTALL_COMFYUI_FRONTEND) -and
+                $line -match '^\s*comfyui[-_.]frontend[-_.]package(?:[^A-Za-z0-9_-].*)?$') { return $false }
+            if (-not $Manage.Torch -and
+                $line -match '^\s*(torch|torchvision|torchaudio)(?:[^A-Za-z0-9_-].*)?$') { return $false }
+            if (-not $Manage.Numpy -and $line -match '^\s*numpy(?:[^A-Za-z0-9_-].*)?$') { return $false }
+            if (-not $Manage.Transformers -and $line -match '^\s*transformers(?:[^A-Za-z0-9_-].*)?$') { return $false }
+            return $true
+        })
+        [System.IO.File]::WriteAllLines($filteredRequirements, [string[]]$filteredLines)
 
         if ([string]::IsNullOrWhiteSpace($ConstraintFile)) {
-            uv pip install -r $installRequirements
+            uv pip install -r $filteredRequirements
         } else {
-            uv pip install --constraint $ConstraintFile -r $installRequirements
+            uv pip install --constraint $ConstraintFile -r $filteredRequirements
         }
     }
     finally {
-        if ($filteredRequirements -and (Test-Path $filteredRequirements)) {
-            Remove-Item $filteredRequirements -Force -ErrorAction SilentlyContinue
-        }
+        Remove-Item $filteredRequirements -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -445,16 +627,29 @@ function Copy-IfMissing {
     }
 
     $repoPath = Join-Path $CUSTOM_NODES_DIR $repoName
+    $disabledRoot = Join-Path $CUSTOM_NODES_DIR ".disabled"
+    $disabledMatch = if (Test-Path $disabledRoot) {
+        Get-ChildItem -LiteralPath $disabledRoot -Force -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq $repoName } | Select-Object -First 1
+    } else { $null }
+    $legacyDisabledMatch = Get-ChildItem -LiteralPath $CUSTOM_NODES_DIR -Force -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ieq "$repoName.disabled" } | Select-Object -First 1
+
     if (Test-Path (Join-Path $repoPath ".git")) {
         Write-Success "$repoName already exists"
     }
+    elseif (Test-Path $repoPath) {
+        Write-Warn "$repoName already exists but is not a Git checkout; preserving it as unmanaged"
+    }
+    elseif ($disabledMatch) {
+        Write-Host " [--] $repoName is disabled by ComfyUI-Manager; leaving $($disabledMatch.FullName) untouched"
+    }
+    elseif ($legacyDisabledMatch) {
+        Write-Host " [--] $repoName has a legacy .disabled directory; leaving $($legacyDisabledMatch.FullName) untouched"
+    }
     else {
         Write-Step "Cloning $repoName..."
-        # Don't redirect stderr (2>&1) — git writes progress to stderr and
-        # PowerShell with $ErrorActionPreference="Stop" treats it as a
-        # terminating error.  Without redirection stderr flows directly to
-        # the console and $LASTEXITCODE still catches real failures.
-        git clone $RepoUrl
+        git clone $RepoUrl $repoPath
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "Failed to clone $repoName"
         }
@@ -462,99 +657,436 @@ function Copy-IfMissing {
 }
 
 # ============================================
-# Interactive Prompts — collect per-install values
 # ============================================
-# These change frequently when testing new ComfyUI versions.
-# Static config (Python, PyTorch, numpy, transformers) stays at the top of the script.
+# Interactive Prompts
+# ============================================
+function Read-Default {
+    param([string]$Label, [string]$Default)
+    $answer = Read-Host "  $Label [$Default]"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer
+}
+
+function Read-Policy {
+    param([string]$Label, [bool]$Default)
+    $shownDefault = if ($Default) { "y" } else { "n" }
+    while ($true) {
+        $answer = Read-Default $Label $shownDefault
+        switch -Regex ($answer.ToLowerInvariant()) {
+            '^(y|yes|true)$' { return "true" }
+            '^(n|no|false)$' { return "false" }
+            '^-$' { return "preserve" }
+            default { Write-Warn "Enter y, n, or - to preserve the installed state." }
+        }
+    }
+}
+
+function Normalize-CudaVariant {
+    param([string]$Value)
+    $normalized = $Value.ToLowerInvariant().Replace("cuda", "").Replace("cu", "").Replace(".", "")
+    switch ($normalized) {
+        "12" { return "cu128" }
+        "13" { return "cu130" }
+        "126" { return "cu126" }
+        "128" { return "cu128" }
+        "130" { return "cu130" }
+        default { return $null }
+    }
+}
+
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "ComfyUI Environment Setup (Windows)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Enter values for this installation (press Enter for defaults):" -ForegroundColor White
-Write-Host ""
-
-$INPUT_COMFYUI_VERSION = Read-Host "  ComfyUI version [$DEFAULT_COMFYUI_VERSION]"
-if ([string]::IsNullOrWhiteSpace($INPUT_COMFYUI_VERSION)) { $INPUT_COMFYUI_VERSION = $DEFAULT_COMFYUI_VERSION }
-
-if ($INSTALL_COMFYUI_FRONTEND) {
-    $INPUT_FRONTEND_VERSION = Read-Host "  Frontend version [$DEFAULT_FRONTEND_VERSION]"
-    if ([string]::IsNullOrWhiteSpace($INPUT_FRONTEND_VERSION)) { $INPUT_FRONTEND_VERSION = $DEFAULT_FRONTEND_VERSION }
-} else {
-    $INPUT_FRONTEND_VERSION = ""
+Write-Host "Configuration mode:"
+Write-Host "  [E]asy (default) - ComfyUI, frontend, and launcher"
+Write-Host "  [A]dvanced       - complete configuration questionnaire"
+Write-Host "  [S]kip questions - use embedded defaults and select steps"
+while ($true) {
+    $modeAnswer = Read-Default "Mode" "E"
+    switch -Regex ($modeAnswer) {
+        '^(e|easy)$' { $CONFIG_MODE = "easy"; break }
+        '^(a|advanced)$' { $CONFIG_MODE = "advanced"; break }
+        '^(s|skip)$' { $CONFIG_MODE = "skip"; break }
+        default { Write-Warn "Enter E, A, or S."; continue }
+    }
+    break
 }
-
-$SUGGESTED_ALIAS = Get-NextComfyAliasName
-$INPUT_ALIAS = Read-Host "  Launcher name [$SUGGESTED_ALIAS]"
-if ([string]::IsNullOrWhiteSpace($INPUT_ALIAS)) { $INPUT_ALIAS = $SUGGESTED_ALIAS }
-
 Write-Host ""
 
-# Derive all values from inputs
-$COMFYUI_VERSION = "v$INPUT_COMFYUI_VERSION"                               # e.g., v0.18.0
-$COMFYUI_DIR_NAME = "ComfyUI_$INPUT_COMFYUI_VERSION"                          # e.g., ComfyUI_0.18.2 (full version)
-$COMFYUI_FRONTEND_VERSION = $INPUT_FRONTEND_VERSION                         # e.g., 1.41.21
-$COMFYUI_ALIAS = $INPUT_ALIAS                                              # e.g., comfyui or comfy2
-$COMFYUI_WAS_CLONED = $false                                               # Set after a new clone completes in this run
+$INPUT_COMFYUI_VERSION = $DEFAULT_COMFYUI_VERSION
+$INPUT_FRONTEND_VERSION = $DEFAULT_FRONTEND_VERSION
+$INPUT_ALIAS = $DEFAULT_ALIAS
 
-# Exclude the official frontend package from every uv resolution when the user
-# manages a custom frontend. This also covers ComfyUI/custom-node requirements.
-$FRONTEND_EXCLUDE_FILE = $null
-$ORIGINAL_UV_EXCLUDE = [Environment]::GetEnvironmentVariable("UV_EXCLUDE", "Process")
-if (-not $INSTALL_COMFYUI_FRONTEND) {
-    $FRONTEND_EXCLUDE_FILE = [System.IO.Path]::GetTempFileName()
-    "comfyui-frontend-package" | Set-Content $FRONTEND_EXCLUDE_FILE -Encoding ASCII
-    if ([string]::IsNullOrWhiteSpace($ORIGINAL_UV_EXCLUDE)) {
-        $env:UV_EXCLUDE = $FRONTEND_EXCLUDE_FILE
-    } else {
-        $env:UV_EXCLUDE = "$ORIGINAL_UV_EXCLUDE $FRONTEND_EXCLUDE_FILE"
+if ($CONFIG_MODE -eq "easy") {
+    Write-Host "Easy configuration (Enter accepts the default; - preserves a setting):"
+    $INPUT_COMFYUI_VERSION = Read-Default "ComfyUI version" $DEFAULT_COMFYUI_VERSION
+    if ($INPUT_COMFYUI_VERSION -eq "-") {
+        $Manage.Comfy = $false
+        $INPUT_COMFYUI_VERSION = $DEFAULT_COMFYUI_VERSION
+    }
+
+    if ($INSTALL_COMFYUI_FRONTEND) {
+        $INPUT_FRONTEND_VERSION = Read-Default "Frontend version" $DEFAULT_FRONTEND_VERSION
+        if ($INPUT_FRONTEND_VERSION -eq "-") {
+            $Manage.Frontend = $false
+            $INPUT_FRONTEND_VERSION = $DEFAULT_FRONTEND_VERSION
+        }
+    }
+
+    $SUGGESTED_ALIAS = Get-NextComfyAliasName
+    $INPUT_ALIAS = Read-Default "Launcher name" $SUGGESTED_ALIAS
+    if ($INPUT_ALIAS -eq "-") {
+        $Manage.Launcher = $false
+        $INPUT_ALIAS = $DEFAULT_ALIAS
     }
 }
+elseif ($CONFIG_MODE -eq "advanced") {
+    Write-Host "Advanced configuration (Enter accepts the default):"
+    Write-Host "  Hint: enter - to skip/ignore management for a setting and keep its installed state."
+    $answer = Read-Default "Base path" $BASE_PATH
+    if ($answer -eq "-") { $Manage.BasePath = $false } else { $BASE_PATH = $answer }
 
+    $answer = Read-Default "Python version" $PYTHON_VERSION
+    if ($answer -eq "-") { $Manage.Python = $false } else { $PYTHON_VERSION = $answer }
+
+    $answer = Read-Default "PyTorch version" $PYTORCH_VERSION
+    if ($answer -eq "-") { $Manage.Torch = $false } else { $PYTORCH_VERSION = $answer }
+
+    $backendDefault = if ($PYTORCH_WHEEL_VARIANT -eq "cpu") { "cpu" } else { "nvidia" }
+    $backendAccepted = $false
+    while (-not $backendAccepted) {
+        $backend = (Read-Default "Hardware backend (NVIDIA/CPU)" $backendDefault).ToLowerInvariant()
+        switch -Regex ($backend) {
+            '^-$' {
+                $Manage.Torch = $false
+                $backendAccepted = $true
+            }
+            '^(n|nvidia)$' {
+                $cudaDefault = if ($PYTORCH_WHEEL_VARIANT.StartsWith("cu")) { $PYTORCH_WHEEL_VARIANT } else { "cu128" }
+                $cuda = Read-Default "CUDA version" $cudaDefault
+                if ($cuda -eq "-") {
+                    $Manage.Torch = $false
+                    $backendAccepted = $true
+                }
+                else {
+                    $variant = Normalize-CudaVariant $cuda
+                    if (-not $variant) {
+                        Write-Warn "Unsupported CUDA alias: $cuda. Use 12.6, 12.8, 13, or cu130."
+                    }
+                    else {
+                        $PYTORCH_WHEEL_VARIANT = $variant
+                        $backendAccepted = $true
+                    }
+                }
+            }
+            '^(c|cpu)$' {
+                $PYTORCH_WHEEL_VARIANT = "cpu"
+                $backendAccepted = $true
+            }
+            '^(a|amd|rocm|amd/rocm)$' {
+                Write-Warn "Official PyTorch Windows instructions do not provide ROCm wheels. ROCm is supported by the Linux installer only."
+            }
+            default { Write-Warn "Enter NVIDIA, CPU, or -." }
+        }
+    }
+
+    $answer = Read-Default "NumPy version" $NUMPY_VERSION
+    if ($answer -eq "-") { $Manage.Numpy = $false } else { $NUMPY_VERSION = $answer }
+    $answer = Read-Default "Transformers version" $TRANSFORMERS_VERSION
+    if ($answer -eq "-") { $Manage.Transformers = $false } else { $TRANSFORMERS_VERSION = $answer }
+
+    $INPUT_COMFYUI_VERSION = Read-Default "ComfyUI version" $DEFAULT_COMFYUI_VERSION
+    if ($INPUT_COMFYUI_VERSION -eq "-") {
+        $Manage.Comfy = $false
+        $INPUT_COMFYUI_VERSION = $DEFAULT_COMFYUI_VERSION
+    }
+
+    switch (Read-Policy "Install Nunchaku library" $INSTALL_NUNCHAKU) {
+        "true" { $INSTALL_NUNCHAKU = $true }
+        "false" { $INSTALL_NUNCHAKU = $false }
+        "preserve" { $Manage.Nunchaku = $false }
+    }
+
+    switch (Read-Policy "Manage ComfyUI frontend package" $INSTALL_COMFYUI_FRONTEND) {
+        "true" {
+            $INSTALL_COMFYUI_FRONTEND = $true
+            $INPUT_FRONTEND_VERSION = Read-Default "Frontend version" $DEFAULT_FRONTEND_VERSION
+            if ($INPUT_FRONTEND_VERSION -eq "-") {
+                $Manage.Frontend = $false
+                $INPUT_FRONTEND_VERSION = $DEFAULT_FRONTEND_VERSION
+            }
+            switch (Read-Policy "Pin frontend in launchers" $PIN_FRONTEND_VERSION_IN_ALIAS) {
+                "true" { $PIN_FRONTEND_VERSION_IN_ALIAS = $true }
+                "false" { $PIN_FRONTEND_VERSION_IN_ALIAS = $false }
+                "preserve" { $Manage.Launcher = $false }
+            }
+        }
+        "false" { $INSTALL_COMFYUI_FRONTEND = $false }
+        "preserve" { $Manage.Frontend = $false }
+    }
+
+    $SUGGESTED_ALIAS = Get-NextComfyAliasName
+    $INPUT_ALIAS = Read-Default "Launcher name" $SUGGESTED_ALIAS
+    if ($INPUT_ALIAS -eq "-") { $Manage.Launcher = $false; $INPUT_ALIAS = $DEFAULT_ALIAS }
+    $answer = Read-Default "Launcher arguments" $COMFYUI_LAUNCH_ARGS
+    if ($answer -eq "-") { $Manage.Launcher = $false } else { $COMFYUI_LAUNCH_ARGS = $answer }
+
+    foreach ($item in @(
+        @("Models", "Share models", $SYMLINK_MODELS),
+        @("Input", "Share input", $SYMLINK_INPUT),
+        @("Output", "Share output", $SYMLINK_OUTPUT),
+        @("User", "Share user data", $SYMLINK_USER),
+        @("Nodes", "Share custom nodes", $SYMLINK_CUSTOM_NODES)
+    )) {
+        $policy = Read-Policy $item[1] $item[2]
+        if ($policy -eq "preserve") {
+            $Manage[$item[0]] = $false
+        }
+        else {
+            $value = $policy -eq "true"
+            switch ($item[0]) {
+                "Models" { $SYMLINK_MODELS = $value }
+                "Input" { $SYMLINK_INPUT = $value }
+                "Output" { $SYMLINK_OUTPUT = $value }
+                "User" { $SYMLINK_USER = $value }
+                "Nodes" { $SYMLINK_CUSTOM_NODES = $value }
+            }
+        }
+    }
+}
+else {
+    Write-Host "Skip mode: using embedded defaults without configuration questions."
+}
+Write-Host ""
+
+if ($Manage.Torch) {
+    Resolve-PyTorchStack
+    if ($PYTHON_VERSION -notmatch '^3\.(10|11|12|13|14)(\.|$)') {
+        throw "Python $PYTHON_VERSION is outside the configured 3.10-3.14 range."
+    }
+    if ($PYTHON_VERSION -match '^3\.14' -and $PYTORCH_VERSION -match '^2\.(6|7)\.') {
+        throw "PyTorch $PYTORCH_VERSION is not configured for Python 3.14."
+    }
+}
+else {
+    $HARDWARE_BACKEND = "preserve"
+    $INSTALL_NUNCHAKU = $false
+    $NUNCHAKU_CUDA_VARIANT = ""
+    $NUNCHAKU_SUPPORTED_TORCH_VERSIONS = @()
+}
+if ($HARDWARE_BACKEND -ne "nvidia") { $INSTALL_NUNCHAKU = $false }
+
+$VENV_PATH = "$BASE_PATH\comfy_env"
+$COMFYUI_PARENT_DIR = $BASE_PATH
+$USER_MODELS_PATH = "$BASE_PATH\models"
+$USER_INPUT_PATH = "$BASE_PATH\input"
+$USER_OUTPUT_PATH = "$BASE_PATH\output"
+$USER_USERDATA_PATH = "$BASE_PATH\user"
+$USER_CUSTOM_NODES_PATH = "$BASE_PATH\custom_nodes"
+
+$COMFYUI_VERSION = "v$INPUT_COMFYUI_VERSION"
+$COMFYUI_DIR_NAME = "ComfyUI_$INPUT_COMFYUI_VERSION"
+$COMFYUI_FRONTEND_VERSION = $INPUT_FRONTEND_VERSION
+$COMFYUI_ALIAS = $INPUT_ALIAS
+$COMFYUI_WAS_CLONED = $false
+
+
+# Prevent unmanaged packages from being changed by dependency resolution.
+$PACKAGE_EXCLUDE_FILE = $null
+$ORIGINAL_UV_EXCLUDE = [Environment]::GetEnvironmentVariable("UV_EXCLUDE", "Process")
+$packageExcludes = @()
+if (-not $Manage.Frontend -or -not $INSTALL_COMFYUI_FRONTEND) { $packageExcludes += "comfyui-frontend-package" }
+if (-not $Manage.Torch) { $packageExcludes += @("torch", "torchvision", "torchaudio") }
+if (-not $Manage.Numpy) { $packageExcludes += "numpy" }
+if (-not $Manage.Transformers) { $packageExcludes += "transformers" }
+if ($packageExcludes.Count -gt 0) {
+    $PACKAGE_EXCLUDE_FILE = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllLines($PACKAGE_EXCLUDE_FILE, [string[]]$packageExcludes)
+    if ([string]::IsNullOrWhiteSpace($ORIGINAL_UV_EXCLUDE)) {
+        $env:UV_EXCLUDE = $PACKAGE_EXCLUDE_FILE
+    } else {
+        $env:UV_EXCLUDE = "$ORIGINAL_UV_EXCLUDE $PACKAGE_EXCLUDE_FILE"
+    }
+}
 try {
 
 # ============================================
+# ============================================
 # Configuration Summary
 # ============================================
+function Get-SharingSummary {
+    param([bool]$Enabled, [bool]$Managed, [string]$Path)
+    if (-not $Managed) { return "Preserve existing entry" }
+    if ($Enabled) { return "Shared ($Path)" }
+    return "Local"
+}
+
 Write-Host "------------------------------------------" -ForegroundColor DarkGray
-Write-Host "Configuration:"
-if ($COMFYUI_VERSION) {
-    Write-Host "  ComfyUI Version: $COMFYUI_VERSION"
+Write-Host "Resolved configuration ($CONFIG_MODE):"
+Write-Host "  ComfyUI Version: $(if ($Manage.Comfy) { $COMFYUI_VERSION } else { "Preserved (location uses $COMFYUI_DIR_NAME)" })"
+Write-Host "  ComfyUI Frontend: $(if (-not $Manage.Frontend) { "Preserved" } elseif ($INSTALL_COMFYUI_FRONTEND) { $COMFYUI_FRONTEND_VERSION } else { "Unmanaged" })"
+Write-Host "  Python Version: $(if ($Manage.Python) { $PYTHON_VERSION } else { "Preserved" })"
+if ($Manage.Torch) {
+    Write-Host "  Hardware Backend: $HARDWARE_BACKEND"
+    Write-Host "  PyTorch Stack: torch $PYTORCH_FULL_VERSION, torchvision $TORCHVISION_FULL_VERSION, torchaudio $TORCHAUDIO_FULL_VERSION"
 } else {
-    Write-Host "  ComfyUI Version: Latest (default branch)"
+    Write-Host "  PyTorch Stack: Preserved (installed metadata is inspected only when required)"
 }
-if ($INSTALL_COMFYUI_FRONTEND) {
-    Write-Host "  ComfyUI Frontend Version: $COMFYUI_FRONTEND_VERSION"
-    Write-Host "  Frontend Alias Pin: $(if ($PIN_FRONTEND_VERSION_IN_ALIAS) { "Enabled" } else { "Disabled" })"
-} else {
-    Write-Host "  ComfyUI Frontend: Unmanaged (preserving custom/existing package)"
-    Write-Host "  Frontend Alias Pin: Disabled (frontend is unmanaged)"
-}
-Write-Host "  Python Version: $PYTHON_VERSION"
-Write-Host "  PyTorch Stack: torch $PYTORCH_FULL_VERSION, torchvision $TORCHVISION_FULL_VERSION, torchaudio $TORCHAUDIO_FULL_VERSION"
-Write-Host "  NumPy Version: $NUMPY_VERSION"
-Write-Host "  Transformers Version: $TRANSFORMERS_VERSION"
+Write-Host "  NumPy Version: $(if ($Manage.Numpy) { $NUMPY_VERSION } else { "Preserved" })"
+Write-Host "  Transformers Version: $(if ($Manage.Transformers) { $TRANSFORMERS_VERSION } else { "Preserved" })"
+Write-Host "  Nunchaku: $(if (-not $Manage.Nunchaku) { "Preserved" } elseif ($INSTALL_NUNCHAKU) { "Enabled ($NUNCHAKU_VERSION, $NUNCHAKU_CUDA_VARIANT)" } else { "Disabled/unavailable for $HARDWARE_BACKEND" })"
 Write-Host "  PowerShell: $($PSVersionTable.PSVersion.ToString())"
-if ($INSTALL_NUNCHAKU) {
-    Write-Host "  Nunchaku: Enabled"
-} else {
-    Write-Host "  Nunchaku: Disabled (custom node will be skipped)"
-}
 Write-Host ""
-Write-Host "  Base Path: $BASE_PATH"
+Write-Host "  Base Path: $BASE_PATH$(if (-not $Manage.BasePath) { " (not saved)" })"
 Write-Host "  ComfyUI Location: $COMFYUI_PARENT_DIR\$COMFYUI_DIR_NAME"
 Write-Host "  Virtual Env: $VENV_PATH"
-Write-Host "  Launcher: $COMFYUI_ALIAS (batch file + PS alias)"
+Write-Host "  Launcher: $(if ($Manage.Launcher) { "$COMFYUI_ALIAS (batch + PowerShell)" } else { "Preserved" })"
 Write-Host "  Launch Arguments: $(if ([string]::IsNullOrWhiteSpace($COMFYUI_LAUNCH_ARGS)) { "None" } else { $COMFYUI_LAUNCH_ARGS })"
 Write-Host ""
 Write-Host "  Directory Sharing:"
-Write-Host "    Models:       $(if ($SYMLINK_MODELS) { "Shared ($USER_MODELS_PATH)" } else { "Local" })"
-Write-Host "    Input:        $(if ($SYMLINK_INPUT) { "Shared ($USER_INPUT_PATH)" } else { "Local" })"
-Write-Host "    Output:       $(if ($SYMLINK_OUTPUT) { "Shared ($USER_OUTPUT_PATH)" } else { "Local" })"
-Write-Host "    User Data:    $(if ($SYMLINK_USER) { "Shared ($USER_USERDATA_PATH)" } else { "Local" })"
-Write-Host "    Custom Nodes: $(if ($SYMLINK_CUSTOM_NODES) { "Shared ($USER_CUSTOM_NODES_PATH)" } else { "Local" })"
+Write-Host "    Models:       $(Get-SharingSummary $SYMLINK_MODELS $Manage.Models $USER_MODELS_PATH)"
+Write-Host "    Input:        $(Get-SharingSummary $SYMLINK_INPUT $Manage.Input $USER_INPUT_PATH)"
+Write-Host "    Output:       $(Get-SharingSummary $SYMLINK_OUTPUT $Manage.Output $USER_OUTPUT_PATH)"
+Write-Host "    User Data:    $(Get-SharingSummary $SYMLINK_USER $Manage.User $USER_USERDATA_PATH)"
+Write-Host "    Custom Nodes: $(Get-SharingSummary $SYMLINK_CUSTOM_NODES $Manage.Nodes $USER_CUSTOM_NODES_PATH)"
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
+
+$configuredPythonTag = "cp$(($PYTHON_VERSION -split '\.')[0..1] -join '')"
+$NUNCHAKU_AVAILABLE = $true
+$NUNCHAKU_UNAVAILABLE_REASON = ""
+if (-not $Manage.Nunchaku) {
+    $NUNCHAKU_AVAILABLE = $false
+    $NUNCHAKU_UNAVAILABLE_REASON = "installed Nunchaku state is preserved"
+}
+elseif (-not $INSTALL_NUNCHAKU) {
+    $NUNCHAKU_AVAILABLE = $false
+    $NUNCHAKU_UNAVAILABLE_REASON = "Nunchaku is disabled or the selected backend is not NVIDIA"
+}
+elseif (-not $NUNCHAKU_CUDA_VARIANT) {
+    $NUNCHAKU_AVAILABLE = $false
+    $NUNCHAKU_UNAVAILABLE_REASON = "no official $NUNCHAKU_VERSION wheel exists for $PYTORCH_WHEEL_VARIANT"
+}
+elseif ($NUNCHAKU_SUPPORTED_TORCH_VERSIONS -notcontains $PYTORCH_MAJOR_MINOR) {
+    $NUNCHAKU_AVAILABLE = $false
+    $NUNCHAKU_UNAVAILABLE_REASON = "no official wheel exists for PyTorch $PYTORCH_MAJOR_MINOR"
+}
+elseif ($NUNCHAKU_SUPPORTED_PYTHON_TAGS -notcontains $configuredPythonTag) {
+    $NUNCHAKU_AVAILABLE = $false
+    $NUNCHAKU_UNAVAILABLE_REASON = "no official wheel exists for $configuredPythonTag"
+}
+
+function ConvertTo-DefaultLiteral {
+    param([string]$Value)
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function Save-InstallerDefaults {
+    if ($CONFIG_MODE -eq "skip") { return }
+
+    $answer = Read-Host "Save successful choices as new defaults? (y/N)"
+    if ([string]::IsNullOrWhiteSpace($answer) -or $answer -notmatch '^[Yy]') { return }
+
+    $attributes = [System.IO.File]::GetAttributes($InstallerScriptPath)
+    if (($attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0) {
+        Write-Warn "Defaults were not saved because $InstallerScriptPath is read-only."
+        return
+    }
+
+    $save = $Embedded.Clone()
+    $packageWork = $Steps[2] -or $Steps[4] -or $Steps[5] -or $Steps[7] -or $Steps[9] -or $Steps[10]
+    $anyWork = ($Steps.Values | Where-Object { $_ }).Count -gt 0
+
+    if ($CONFIG_MODE -eq "easy") {
+        if ($Steps[5] -and $Manage.Comfy) { $save.Comfy = $INPUT_COMFYUI_VERSION }
+        if ($packageWork -and $Manage.Frontend) { $save.Frontend = $COMFYUI_FRONTEND_VERSION }
+        if ($Steps[11] -and $Manage.Launcher) { $save.Alias = $COMFYUI_ALIAS }
+    }
+    else {
+        if ($anyWork -and $Manage.BasePath) { $save.BasePath = $BASE_PATH }
+        if ($Steps[1] -and $Manage.Python) { $save.Python = $PYTHON_VERSION }
+        if (($Steps[2] -or $Steps[10]) -and $Manage.Torch) {
+            $save.Torch = $PYTORCH_VERSION
+            $save.Variant = $PYTORCH_WHEEL_VARIANT
+        }
+        if ($packageWork) {
+            if ($Manage.Numpy) { $save.Numpy = $NUMPY_VERSION }
+            if ($Manage.Transformers) { $save.Transformers = $TRANSFORMERS_VERSION }
+            if ($Manage.Frontend) {
+                $save.ManageFrontend = $INSTALL_COMFYUI_FRONTEND
+                if ($INSTALL_COMFYUI_FRONTEND) { $save.Frontend = $COMFYUI_FRONTEND_VERSION }
+            }
+        }
+        if ($Steps[5] -and $Manage.Comfy) { $save.Comfy = $INPUT_COMFYUI_VERSION }
+        if ($Steps[3] -and $Manage.Nunchaku) { $save.Nunchaku = $INSTALL_NUNCHAKU }
+        if ($Steps[11] -and $Manage.Launcher) {
+            $save.Alias = $COMFYUI_ALIAS
+            $save.Args = $COMFYUI_LAUNCH_ARGS
+            $save.PinFrontend = $PIN_FRONTEND_VERSION_IN_ALIAS
+        }
+        if ($Steps[5]) {
+            if ($Manage.Models) { $save.Models = $SYMLINK_MODELS }
+            if ($Manage.Input) { $save.Input = $SYMLINK_INPUT }
+            if ($Manage.Output) { $save.Output = $SYMLINK_OUTPUT }
+            if ($Manage.User) { $save.User = $SYMLINK_USER }
+            if ($Manage.Nodes) { $save.Nodes = $SYMLINK_CUSTOM_NODES }
+        }
+    }
+
+    $newline = [Environment]::NewLine
+    $block = @(
+        "# BEGIN COMFYUI INSTALLER DEFAULTS"
+        ('$BASE_PATH = ' + (ConvertTo-DefaultLiteral $save.BasePath))
+        ('$PYTHON_VERSION = ' + (ConvertTo-DefaultLiteral $save.Python))
+        ('$PYTORCH_VERSION = ' + (ConvertTo-DefaultLiteral $save.Torch))
+        ('$PYTORCH_WHEEL_VARIANT = ' + (ConvertTo-DefaultLiteral $save.Variant))
+        ('$NUMPY_VERSION = ' + (ConvertTo-DefaultLiteral $save.Numpy))
+        ('$TRANSFORMERS_VERSION = ' + (ConvertTo-DefaultLiteral $save.Transformers))
+        ('$DEFAULT_COMFYUI_VERSION = ' + (ConvertTo-DefaultLiteral $save.Comfy))
+        ('$DEFAULT_FRONTEND_VERSION = ' + (ConvertTo-DefaultLiteral $save.Frontend))
+        ('$DEFAULT_ALIAS = ' + (ConvertTo-DefaultLiteral $save.Alias))
+        ('$COMFYUI_LAUNCH_ARGS = ' + (ConvertTo-DefaultLiteral $save.Args))
+        ('$SYMLINK_MODELS = $' + $save.Models.ToString().ToLowerInvariant())
+        ('$SYMLINK_INPUT = $' + $save.Input.ToString().ToLowerInvariant())
+        ('$SYMLINK_OUTPUT = $' + $save.Output.ToString().ToLowerInvariant())
+        ('$SYMLINK_USER = $' + $save.User.ToString().ToLowerInvariant())
+        ('$SYMLINK_CUSTOM_NODES = $' + $save.Nodes.ToString().ToLowerInvariant())
+        ('$INSTALL_NUNCHAKU = $' + $save.Nunchaku.ToString().ToLowerInvariant())
+        ('$INSTALL_COMFYUI_FRONTEND = $' + $save.ManageFrontend.ToString().ToLowerInvariant())
+        ('$PIN_FRONTEND_VERSION_IN_ALIAS = $' + $save.PinFrontend.ToString().ToLowerInvariant())
+        "# END COMFYUI INSTALLER DEFAULTS"
+    ) -join $newline
+    $reader = New-Object System.IO.StreamReader($InstallerScriptPath, $true)
+    try {
+        $source = $reader.ReadToEnd()
+        $encoding = $reader.CurrentEncoding
+    }
+    finally { $reader.Dispose() }
+    $pattern = '(?ms)^# BEGIN COMFYUI INSTALLER DEFAULTS\r?\n.*?^# END COMFYUI INSTALLER DEFAULTS$'
+    if ([regex]::Matches($source, $pattern).Count -ne 1) {
+        Write-Warn "Defaults were not saved because the marked block was missing or ambiguous."
+        return
+    }
+    $candidateText = [regex]::Replace($source, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $block })
+    if ($env:COMFY_INSTALLER_FORCE_INVALID_CANDIDATE -eq "1") { $candidateText += "$newline if invalid candidate" }
+
+    $candidate = "$InstallerScriptPath.candidate.$([guid]::NewGuid().ToString('N'))"
+    $backup = "$candidate.backup"
+    try {
+        [System.IO.File]::WriteAllText($candidate, $candidateText, $encoding)
+        $null = [scriptblock]::Create($candidateText)
+        [System.IO.File]::SetAttributes($candidate, $attributes)
+        [System.IO.File]::Replace($candidate, $InstallerScriptPath, $backup)
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+        Write-Success "Saved successful choices in $InstallerScriptPath"
+    }
+    catch {
+        Remove-Item $candidate, $backup -Force -ErrorAction SilentlyContinue
+        Write-Warn "Installation succeeded, but defaults were not saved: $($_.Exception.Message)"
+    }
+}
 
 # ============================================
 # Step Selection
@@ -572,6 +1104,14 @@ Write-Host "   8) Performance libraries (llama-cpp, sageattention)"
 Write-Host "   9) Upgrade and pin package versions"
 Write-Host "  10) Enforce final package versions"
 Write-Host "  11) Create launcher scripts and PowerShell aliases ($COMFYUI_ALIAS)"
+Write-Host "  12) Compatibility audit and curated repair"
+Write-Host ""
+Write-Host "Unavailable steps:"
+if (-not $Manage.Python) { Write-Host "   1) Python version is preserved" }
+if (-not $Manage.Torch) { Write-Host "   2) PyTorch stack is preserved" }
+if (-not $NUNCHAKU_AVAILABLE) { Write-Host "   3) $NUNCHAKU_UNAVAILABLE_REASON" }
+if (-not $Manage.Comfy) { Write-Host "   5) ComfyUI checkout is preserved" }
+if (-not $Manage.Launcher) { Write-Host "  11) Launchers are preserved" }
 Write-Host ""
 Write-Host "   a) All steps (default)"
 Write-Host ""
@@ -582,10 +1122,10 @@ $STEP_SELECTION = $STEP_SELECTION -replace ',', ' '
 
 # Initialize step flags
 $Steps = @{}
-for ($i = 1; $i -le 11; $i++) { $Steps[$i] = $false }
+for ($i = 1; $i -le 12; $i++) { $Steps[$i] = $false }
 
 if ($STEP_SELECTION -eq "a") {
-    for ($i = 1; $i -le 11; $i++) { $Steps[$i] = $true }
+    for ($i = 1; $i -le 12; $i++) { $Steps[$i] = $true }
     if (-not $INSTALL_NUNCHAKU) { $Steps[3] = $false }
 }
 else {
@@ -604,13 +1144,44 @@ else {
 
     foreach ($num in $expanded) {
         $n = 0
-        if ([int]::TryParse("$num", [ref]$n) -and $n -ge 1 -and $n -le 11) {
+        if ([int]::TryParse("$num", [ref]$n) -and $n -ge 1 -and $n -le 12) {
             $Steps[$n] = $true
         }
         else {
             Write-Warn "Unknown option: $num"
         }
     }
+}
+
+function Disable-Step {
+    param([int]$Number, [string]$Reason)
+    if ($Steps[$Number]) { Write-Warn "Step $Number unavailable: $Reason" }
+    $Steps[$Number] = $false
+}
+
+if (-not $Manage.Python) { Disable-Step 1 "Python version is preserved" }
+if (-not $Manage.Torch) { Disable-Step 2 "the installed PyTorch stack is preserved" }
+if (-not $NUNCHAKU_AVAILABLE) { Disable-Step 3 $NUNCHAKU_UNAVAILABLE_REASON }
+if (-not $Manage.Comfy) { Disable-Step 5 "ComfyUI checkout management is preserved" }
+if (-not $Manage.Launcher) { Disable-Step 11 "launcher alias, arguments, or pinning are preserved" }
+
+if (($Steps.Values | Where-Object { $_ }).Count -eq 0) {
+    throw "No available steps remain after applying the configuration."
+}
+
+$needsVenvSteps = @(2..12)
+$needsVenv = @($needsVenvSteps | Where-Object { $Steps[$_] }).Count -gt 0
+$activateScriptForCheck = Join-Path $VENV_PATH "Scripts\Activate.ps1"
+if ($needsVenv -and -not $Steps[1] -and -not (Test-Path $activateScriptForCheck) -and
+    $env:COMFY_INSTALLER_TEST_VENV_PRESENT -ne "1") {
+    throw "Selected steps require an existing virtual environment at $VENV_PATH because step 1 was omitted."
+}
+
+$needsComfy = @((6, 7, 8, 11) | Where-Object { $Steps[$_] }).Count -gt 0
+$COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
+if ($needsComfy -and -not $Steps[5] -and -not (Test-Path $COMFYUI_DIR) -and
+    $env:COMFY_INSTALLER_TEST_COMFYUI_PRESENT -ne "1") {
+    throw "Selected steps require an existing ComfyUI checkout at $COMFYUI_DIR because step 5 was omitted."
 }
 
 # Display selected steps
@@ -628,8 +1199,9 @@ $stepNames = @{
     9 = "Upgrade/pin packages"
     10 = "Enforce final versions"
     11 = "Launcher scripts and aliases"
+    12 = "Compatibility audit and curated repair"
 }
-foreach ($i in 1..11) {
+foreach ($i in 1..12) {
     if ($Steps[$i]) {
         Write-Host "  [x] $($stepNames[$i])" -ForegroundColor Green
     }
@@ -643,8 +1215,14 @@ if ($confirm -notmatch '^[Yy]') {
 }
 Write-Host ""
 
+if ($env:COMFY_INSTALLER_TEST_MODE -eq "1") {
+    Write-Host "Test mode: selected work completed without filesystem or network changes."
+    Save-InstallerDefaults
+    return
+}
+
 # ============================================
-# Activate existing venv if present (for steps 2-10 without step 1)
+# Activate an existing venv for environment-dependent steps when step 1 is omitted
 # ============================================
 $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
 $ACTIVATE_SCRIPT = Join-Path $VENV_PATH "Scripts\Activate.ps1"
@@ -658,11 +1236,11 @@ if ((Test-Path $VENV_PATH) -and (Test-Path $ACTIVATE_SCRIPT) -and (-not $Steps[1
 }
 
 # ============================================================================
-# [1/11] Python Environment Setup
+# [1/12] Python Environment Setup
 # ============================================================================
 if ($Steps[1]) {
 
-    Write-Header "[1/11] Setting up Python Environment"
+    Write-Header "[1/12] Setting up Python Environment"
 
     # Check if pyenv-win is installed
     $pyenvInstalled = Test-CommandExists "pyenv"
@@ -792,48 +1370,104 @@ else {
 $env:UV_LINK_MODE = "copy"
 
 # ============================================================================
-# [2/11] Install PyTorch
+# Inspect unmanaged versions only when selected dependency work needs exact
+# constraints. Missing preserved packages receive an impossible constraint.
+function Get-InstalledDistributionVersion {
+    param([string]$Distribution)
+    $venvPython = Join-Path $VENV_PATH "Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) {
+        return "0+preserve"
+    }
+    $result = & $venvPython -c "import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))" $Distribution 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($result)) { return "0+preserve" }
+    return ($result | Select-Object -First 1).Trim()
+}
+
+$metadataRequired = @((4, 5, 7, 8, 9, 10, 12) | Where-Object { $Steps[$_] }).Count -gt 0
+if ($metadataRequired) {
+    $script:PYTHON_WHEEL_TAG = (python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')").Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the active Python wheel tag." }
+    if (-not $Manage.Torch) {
+        $PYTORCH_FULL_VERSION = Get-InstalledDistributionVersion "torch"
+        $TORCHVISION_FULL_VERSION = Get-InstalledDistributionVersion "torchvision"
+        $TORCHAUDIO_FULL_VERSION = Get-InstalledDistributionVersion "torchaudio"
+        $installedTorchBase = ($PYTORCH_FULL_VERSION -split '\+')[0]
+        $PYTORCH_MAJOR_MINOR = ($installedTorchBase -split '\.')[0..1] -join '.'
+        $backendMetadata = python -c "import torch; print(f'nvidia:{torch.version.cuda}' if torch.version.cuda else ('cpu' if not torch.version.hip else f'rocm:{torch.version.hip}'))" 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($backendMetadata)) {
+            $backendMetadata = "unknown"
+        } else {
+            $backendMetadata = ($backendMetadata | Select-Object -First 1).Trim()
+        }
+        switch -Regex ($backendMetadata) {
+            '^nvidia:' {
+                $HARDWARE_BACKEND = "nvidia"
+                $installedCudaVersion = $backendMetadata.Substring(7)
+                $PYTORCH_WHEEL_VARIANT = "cu$($installedCudaVersion.Replace('.', ''))"
+                $PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/$PYTORCH_WHEEL_VARIANT"
+            }
+            '^cpu$' {
+                $HARDWARE_BACKEND = "cpu"
+                $PYTORCH_WHEEL_VARIANT = "cpu"
+                $PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+            }
+            default { $HARDWARE_BACKEND = "unknown" }
+        }
+        Write-Host "   Preserving installed PyTorch metadata: $PYTORCH_FULL_VERSION"
+        Write-Host "   Detected installed hardware backend: $HARDWARE_BACKEND"
+    }
+    if (-not $Manage.Numpy) {
+        $NUMPY_VERSION = Get-InstalledDistributionVersion "numpy"
+        Write-Host "   Preserving installed NumPy metadata: $NUMPY_VERSION"
+    }
+    if (-not $Manage.Transformers) {
+        $TRANSFORMERS_VERSION = Get-InstalledDistributionVersion "transformers"
+        Write-Host "   Preserving installed Transformers metadata: $TRANSFORMERS_VERSION"
+    }
+}
+
+# [2/12] Install PyTorch
 # ============================================================================
 if ($Steps[2]) {
 
-    Write-Header "[2/11] Installing PyTorch and Base Dependencies"
+    Write-Header "[2/12] Installing PyTorch and Base Dependencies"
 
     Write-Step "Installing PyTorch ${PYTORCH_FULL_VERSION}..."
     uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
 }
 
 # ============================================================================
-# [3/11] Install Nunchaku
+# [3/12] Install Nunchaku
 # ============================================================================
 if ($Steps[3]) {
+    Write-Header "[3/12] Installing Nunchaku Acceleration Library"
 
-    Write-Header "[3/11] Installing Nunchaku Acceleration Library"
-
-    $PYTHON_WHEEL_TAG = $script:PYTHON_WHEEL_TAG
-    Write-Step "Installing nunchaku 1.2.1 for PyTorch ${PYTORCH_MAJOR_MINOR} (Python ${PYTHON_WHEEL_TAG})..."
-    $NUNCHAKU_WHEEL = "https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu12.8torch${PYTORCH_MAJOR_MINOR}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-win_amd64.whl"
-
-    try {
-        uv pip install $NUNCHAKU_WHEEL
+    $PYTHON_WHEEL_TAG = (python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')").Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the active Python wheel tag." }
+    if (-not $NUNCHAKU_CUDA_VARIANT) {
+        throw "Nunchaku $NUNCHAKU_VERSION has no official wheel for $PYTORCH_WHEEL_VARIANT."
     }
-    catch {
-        Write-Warn "Prebuilt nunchaku wheel not found for PyTorch ${PYTORCH_MAJOR_MINOR} / Python ${PYTHON_WHEEL_TAG}"
-        Write-Step "Trying to install from source or latest compatible version..."
-        try {
-            uv pip install nunchaku
-        }
-        catch {
-            Write-Warn "Nunchaku installation failed (optional)"
-        }
+    if ($NUNCHAKU_SUPPORTED_TORCH_VERSIONS -notcontains $PYTORCH_MAJOR_MINOR) {
+        throw "Nunchaku $NUNCHAKU_VERSION $NUNCHAKU_CUDA_VARIANT has no official wheel for PyTorch $PYTORCH_MAJOR_MINOR."
+    }
+    if ($NUNCHAKU_SUPPORTED_PYTHON_TAGS -notcontains $PYTHON_WHEEL_TAG) {
+        throw "Nunchaku $NUNCHAKU_VERSION has no official wheel for $PYTHON_WHEEL_TAG."
+    }
+
+    $NUNCHAKU_WHEEL = "https://github.com/nunchaku-ai/nunchaku/releases/download/v$NUNCHAKU_VERSION/nunchaku-$NUNCHAKU_VERSION+${NUNCHAKU_CUDA_VARIANT}torch$PYTORCH_MAJOR_MINOR-$PYTHON_WHEEL_TAG-$PYTHON_WHEEL_TAG-win_amd64.whl"
+    Write-Step "Installing official Nunchaku wheel ($NUNCHAKU_CUDA_VARIANT, torch $PYTORCH_MAJOR_MINOR, $PYTHON_WHEEL_TAG)..."
+    uv pip install $NUNCHAKU_WHEEL
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install official Nunchaku wheel: $NUNCHAKU_WHEEL. No PyPI fallback was attempted."
     }
 }
 
 # ============================================================================
-# [4/11] Install Face Recognition and Runtime Libraries
+# [4/12] Install Face Recognition and Runtime Libraries
 # ============================================================================
 if ($Steps[4]) {
 
-    Write-Header "[4/11] Installing Face Recognition and Runtime Libraries"
+    Write-Header "[4/12] Installing Face Recognition and Runtime Libraries"
 
     # Create temporary constraints file to prevent torch downgrade
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
@@ -841,7 +1475,7 @@ if ($Steps[4]) {
 torch==$PYTORCH_FULL_VERSION
 torchvision==$TORCHVISION_FULL_VERSION
 torchaudio==$TORCHAUDIO_FULL_VERSION
-numpy>=$NUMPY_VERSION
+numpy==$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
 
@@ -881,11 +1515,11 @@ transformers==$TRANSFORMERS_VERSION
 }
 
 # ============================================================================
-# [5/11] Install ComfyUI
+# [5/12] Install ComfyUI
 # ============================================================================
 if ($Steps[5]) {
 
-    Write-Header "[5/11] Installing ComfyUI Core"
+    Write-Header "[5/12] Installing ComfyUI Core"
 
     $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
 
@@ -953,7 +1587,7 @@ if ($Steps[5]) {
 torch==$PYTORCH_FULL_VERSION
 torchvision==$TORCHVISION_FULL_VERSION
 torchaudio==$TORCHAUDIO_FULL_VERSION
-numpy>=$NUMPY_VERSION
+numpy==$NUMPY_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
 
     Write-Host "   Using constraints to prevent torch/numpy downgrade"
@@ -970,18 +1604,18 @@ Write-Header "Configuring Shared and Local Directories"
 
 $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
 
-Set-ComfyDirectorySharing -Name "Models" -LocalPath (Join-Path $COMFYUI_DIR "models") -SharedPath $USER_MODELS_PATH -Enabled $SYMLINK_MODELS -NewInstall $COMFYUI_WAS_CLONED
-Set-ComfyDirectorySharing -Name "Input" -LocalPath (Join-Path $COMFYUI_DIR "input") -SharedPath $USER_INPUT_PATH -Enabled $SYMLINK_INPUT -NewInstall $COMFYUI_WAS_CLONED
-Set-ComfyDirectorySharing -Name "Output" -LocalPath (Join-Path $COMFYUI_DIR "output") -SharedPath $USER_OUTPUT_PATH -Enabled $SYMLINK_OUTPUT -NewInstall $COMFYUI_WAS_CLONED
-Set-ComfyDirectorySharing -Name "User Data" -LocalPath (Join-Path $COMFYUI_DIR "user") -SharedPath $USER_USERDATA_PATH -Enabled $SYMLINK_USER -NewInstall $COMFYUI_WAS_CLONED
-Set-ComfyDirectorySharing -Name "Custom Nodes" -LocalPath (Join-Path $COMFYUI_DIR "custom_nodes") -SharedPath $USER_CUSTOM_NODES_PATH -Enabled $SYMLINK_CUSTOM_NODES -NewInstall $COMFYUI_WAS_CLONED
+if ($Steps[5] -and $Manage.Models) { Set-ComfyDirectorySharing -Name "Models" -LocalPath (Join-Path $COMFYUI_DIR "models") -SharedPath $USER_MODELS_PATH -Enabled $SYMLINK_MODELS -NewInstall $COMFYUI_WAS_CLONED }
+if ($Steps[5] -and $Manage.Input) { Set-ComfyDirectorySharing -Name "Input" -LocalPath (Join-Path $COMFYUI_DIR "input") -SharedPath $USER_INPUT_PATH -Enabled $SYMLINK_INPUT -NewInstall $COMFYUI_WAS_CLONED }
+if ($Steps[5] -and $Manage.Output) { Set-ComfyDirectorySharing -Name "Output" -LocalPath (Join-Path $COMFYUI_DIR "output") -SharedPath $USER_OUTPUT_PATH -Enabled $SYMLINK_OUTPUT -NewInstall $COMFYUI_WAS_CLONED }
+if ($Steps[5] -and $Manage.User) { Set-ComfyDirectorySharing -Name "User Data" -LocalPath (Join-Path $COMFYUI_DIR "user") -SharedPath $USER_USERDATA_PATH -Enabled $SYMLINK_USER -NewInstall $COMFYUI_WAS_CLONED }
+if ($Steps[5] -and $Manage.Nodes) { Set-ComfyDirectorySharing -Name "Custom Nodes" -LocalPath (Join-Path $COMFYUI_DIR "custom_nodes") -SharedPath $USER_CUSTOM_NODES_PATH -Enabled $SYMLINK_CUSTOM_NODES -NewInstall $COMFYUI_WAS_CLONED }
 
 # ============================================================================
-# [6/11] Clone Custom Nodes
+# [6/12] Clone Custom Nodes
 # ============================================================================
 if ($Steps[6]) {
 
-    Write-Header "[6/11] Cloning Custom Nodes"
+    Write-Header "[6/12] Cloning Custom Nodes"
 
     $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
     $CUSTOM_NODES_DIR = Join-Path $COMFYUI_DIR "custom_nodes"
@@ -1081,11 +1715,11 @@ if ($Steps[6]) {
 }
 
 # ============================================================================
-# [7/11] Install Custom Node Dependencies
+# [7/12] Install Custom Node Dependencies
 # ============================================================================
 if ($Steps[7]) {
 
-    Write-Header "[7/11] Installing Custom Node Dependencies"
+    Write-Header "[7/12] Installing Custom Node Dependencies"
 
     $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
     $CUSTOM_NODES_DIR = Join-Path $COMFYUI_DIR "custom_nodes"
@@ -1096,7 +1730,7 @@ if ($Steps[7]) {
 torch==$PYTORCH_FULL_VERSION
 torchvision==$TORCHVISION_FULL_VERSION
 torchaudio==$TORCHAUDIO_FULL_VERSION
-numpy>=$NUMPY_VERSION
+numpy==$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 numba>=0.58.0
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
@@ -1104,7 +1738,12 @@ numba>=0.58.0
     Write-Host "Using constraints to prevent torch/numpy/transformers downgrade"
     Write-Host ""
 
-    $nodeDirs = Get-ChildItem $CUSTOM_NODES_DIR -Directory -ErrorAction SilentlyContinue
+    $disabledRoot = Join-Path $CUSTOM_NODES_DIR ".disabled"
+    if (Test-Path $disabledRoot) {
+        Write-Host " [--] Skipping ComfyUI-Manager disabled nodes in $disabledRoot"
+    }
+    $nodeDirs = Get-ChildItem -LiteralPath $CUSTOM_NODES_DIR -Force -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ine ".disabled" -and -not $_.Name.EndsWith(".disabled", [System.StringComparison]::OrdinalIgnoreCase) }
     foreach ($nodeDir in $nodeDirs) {
         $reqFile = Join-Path $nodeDir.FullName "requirements.txt"
         if (Test-Path $reqFile) {
@@ -1114,23 +1753,28 @@ numba>=0.58.0
             } -Optional
         }
     }
+    $legacyDisabled = Get-ChildItem -LiteralPath $CUSTOM_NODES_DIR -Force -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name.EndsWith(".disabled", [System.StringComparison]::OrdinalIgnoreCase) }
+    foreach ($disabledNode in $legacyDisabled) {
+        Write-Host " [--] Skipping legacy disabled node: $($disabledNode.Name)"
+    }
 
     Remove-Item $CONSTRAINTS_FILE -Force -ErrorAction SilentlyContinue
 }
 
 # ============================================================================
-# [8/11] Install Performance Libraries
+# [8/12] Install Performance Libraries
 # ============================================================================
 if ($Steps[8]) {
 
-    Write-Header "[8/11] Installing Performance Libraries"
+    Write-Header "[8/12] Installing Performance Libraries"
 
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
     @"
 torch==$PYTORCH_FULL_VERSION
 torchvision==$TORCHVISION_FULL_VERSION
 torchaudio==$TORCHAUDIO_FULL_VERSION
-numpy>=$NUMPY_VERSION
+numpy==$NUMPY_VERSION
 transformers==$TRANSFORMERS_VERSION
 "@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
 
@@ -1139,137 +1783,99 @@ transformers==$TRANSFORMERS_VERSION
         uv pip install --constraint $CONSTRAINTS_FILE "llama-cpp-python>=0.3.16"
     } -Optional
 
-    # Flash Attention - try prebuilt wheel from Eclipse releases first, then PyPI
-    $PYTHON_WHEEL_TAG = $script:PYTHON_WHEEL_TAG
-    # Extract CUDA version from index URL (e.g., "cu128" from ".../whl/cu128")
-    $CUDA_VERSION = ($PYTORCH_INDEX_URL -split '/')[-1]
-    $FLASH_ATTN_VERSION = "2.8.3"
-    $FLASH_ATTN_WHEEL = "https://github.com/r-vage/ComfyUI_Eclipse/releases/download/wheels/flash_attn-${FLASH_ATTN_VERSION}+${CUDA_VERSION}torch${PYTORCH_MAJOR_MINOR}-${PYTHON_WHEEL_TAG}-${PYTHON_WHEEL_TAG}-win_amd64.whl"
+    if ($HARDWARE_BACKEND -eq "nvidia") {
+        Write-Host ""
+        Write-Warn "Upstream Flash Attention does not publish official Windows wheels for this configuration."
+        Remove-FlashAttention
+        Write-Host "   Flash Attention is disabled; ComfyUI will use PyTorch attention."
+        if (-not (Test-PythonImport "import kornia")) {
+            throw "Kornia still fails to import after removing Flash Attention."
+        }
 
-    Write-Host ""
-    Write-Step "Attempting Flash Attention from prebuilt wheel (${PYTHON_WHEEL_TAG}, ${CUDA_VERSION}, torch${PYTORCH_MAJOR_MINOR})..."
-    $flashInstalled = Invoke-SafeCommand "Installing flash-attn ${FLASH_ATTN_VERSION} (prebuilt wheel)" {
-        uv pip install --constraint $CONSTRAINTS_FILE $FLASH_ATTN_WHEEL
-    } -Optional
-
-    if (-not $flashInstalled) {
-        Write-Step "Prebuilt wheel not available for this configuration. Trying PyPI..."
-        $flashInstalled = Invoke-SafeCommand "Installing flash-attn from PyPI (may require Visual Studio Build Tools)" {
-            uv pip install --constraint $CONSTRAINTS_FILE flash-attn --no-build-isolation
-        } -Optional
+        Install-SageAttention -ConstraintFile $CONSTRAINTS_FILE
     }
-
-    if (-not $flashInstalled) {
-        Write-Warn "Flash Attention could not be installed automatically."
-        Write-Host "   You can find prebuilt wheels for other configurations at:"
-        Write-Host "   https://github.com/r-vage/ComfyUI_Eclipse/releases/tag/wheels"
-        Write-Host "   https://github.com/mjun0812/flash-attention-prebuild-wheels/releases"
-        Write-Host "   Download the matching .whl file and install with:  uv pip install <path-to-wheel>"
+    else {
+        Write-Host ""
+        Write-Warn "Removing CUDA-only attention accelerators for $HARDWARE_BACKEND"
+        Remove-FlashAttention
+        uv pip uninstall sageattention 2>$null | Out-Null
     }
-
-    # SageAttention
-    Write-Host ""
-    Invoke-SafeCommand "Installing Sage Attention" {
-        uv pip install --constraint $CONSTRAINTS_FILE sageattention
-    } -Optional
 
     Remove-Item $CONSTRAINTS_FILE -Force -ErrorAction SilentlyContinue
 }
 
 # ============================================================================
-# [9/11] Upgrade & Pin Package Versions
+# [9/12] Upgrade & Pin Package Versions
 # ============================================================================
 if ($Steps[9]) {
-
-    Write-Header "[9/11] Upgrading & Pinning Package Versions"
+    Write-Header "[9/12] Upgrading & Pinning Package Versions"
 
     $CONSTRAINTS_FILE = [System.IO.Path]::GetTempFileName()
-    @"
-torch==$PYTORCH_FULL_VERSION
-torchvision==$TORCHVISION_FULL_VERSION
-torchaudio==$TORCHAUDIO_FULL_VERSION
-numpy>=$NUMPY_VERSION
-transformers==$TRANSFORMERS_VERSION
-"@ | Set-Content $CONSTRAINTS_FILE -Encoding UTF8
+    $constraintLines = @(
+        "torch==$PYTORCH_FULL_VERSION"
+        "torchvision==$TORCHVISION_FULL_VERSION"
+        "torchaudio==$TORCHAUDIO_FULL_VERSION"
+        "numpy==$NUMPY_VERSION"
+        "transformers==$TRANSFORMERS_VERSION"
+        "nvidia-ml-py>=12,<13"
+    )
+    [System.IO.File]::WriteAllLines($CONSTRAINTS_FILE, [string[]]$constraintLines)
 
-    Write-Step "Upgrading packages to latest versions..."
-    $upgradePackages = @("av", "ultralytics", "onnxruntime", "onnxruntime-gpu", "opencv-python", "gguf")
-    foreach ($pkg in $upgradePackages) {
-        Invoke-SafeCommand "Upgrading $pkg" {
-            uv pip install --constraint $CONSTRAINTS_FILE --upgrade $pkg
-        } -Optional
-    }
+    Invoke-SafeCommand "Upgrading selected direct packages without broadly upgrading their dependencies" {
+        uv pip install --constraint $CONSTRAINTS_FILE --upgrade-package ultralytics --upgrade-package gguf ultralytics gguf
+    } -Optional
+    Write-Host "   Preserving AV, protobuf, OpenCV, inference, tokenizers, and other conflict-prone packages for step 12."
 
-    # Optional upgrades
-    foreach ($pkg in @("inference", "inference-gpu", "inference-cli")) {
-        Invoke-SafeCommand "Upgrading $pkg" {
-            uv pip install --constraint $CONSTRAINTS_FILE --upgrade $pkg
-        } -Optional
-    }
-
-    Write-Step "Pinning critical package versions..."
     uv pip install "mistral-common>=1.8.6"
-    uv pip install "numpy>=$NUMPY_VERSION"
-    uv pip install "transformers==$TRANSFORMERS_VERSION"
-
+    if ($Manage.Numpy) { uv pip install "numpy==$NUMPY_VERSION" }
+    if ($Manage.Transformers) { uv pip install "transformers==$TRANSFORMERS_VERSION" }
+    if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND) {
+        uv pip install "comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
+    }
     Remove-Item $CONSTRAINTS_FILE -Force -ErrorAction SilentlyContinue
 }
 
 # ============================================================================
-# [10/11] Enforce Configured Package Versions
+# [10/12] Enforce Configured Package Versions
 # ============================================================================
 if ($Steps[10]) {
+    Write-Header "[10/12] Enforcing Configured Package Versions"
 
-    Write-Header "[10/11] Enforcing Configured Package Versions"
-
-    Write-Host "Note: Custom nodes may have installed incompatible versions."
-    if ($INSTALL_COMFYUI_FRONTEND) {
-        Write-Host "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, Transformers ${TRANSFORMERS_VERSION}, Frontend ${COMFYUI_FRONTEND_VERSION}"
-    } else {
-        Write-Host "      Ensuring PyTorch ${PYTORCH_FULL_VERSION}, NumPy ${NUMPY_VERSION}, and Transformers ${TRANSFORMERS_VERSION}"
-        Write-Host "      Leaving the ComfyUI frontend unmanaged"
+    if ($Manage.Torch) {
+        Invoke-SafeCommand "Enforcing PyTorch $PYTORCH_FULL_VERSION" {
+            uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
+        } -Optional
     }
-    Write-Host ""
+    else { Write-Host "   Preserving the installed PyTorch stack" }
 
-    # Ensure PyTorch
-    Invoke-SafeCommand "Enforcing PyTorch $PYTORCH_FULL_VERSION" {
-        uv pip install "torch==$PYTORCH_FULL_VERSION" "torchvision==$TORCHVISION_FULL_VERSION" "torchaudio==$TORCHAUDIO_FULL_VERSION" --index-url $PYTORCH_INDEX_URL
-    } -Optional
-
-    # Ensure NumPy
-    Invoke-SafeCommand "Enforcing NumPy $NUMPY_VERSION" {
-        uv pip install "numpy==$NUMPY_VERSION"
-    } -Optional
-
-    # Ensure Transformers
-    Invoke-SafeCommand "Enforcing Transformers $TRANSFORMERS_VERSION" {
-        uv pip install "transformers==$TRANSFORMERS_VERSION"
-    } -Optional
-
-    # Ensure ComfyUI Frontend when managed
-    if ($INSTALL_COMFYUI_FRONTEND) {
+    if ($Manage.Numpy) {
+        Invoke-SafeCommand "Enforcing NumPy $NUMPY_VERSION" { uv pip install "numpy==$NUMPY_VERSION" } -Optional
+    }
+    if ($Manage.Transformers) {
+        Invoke-SafeCommand "Enforcing Transformers $TRANSFORMERS_VERSION" { uv pip install "transformers==$TRANSFORMERS_VERSION" } -Optional
+    }
+    if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND) {
         Invoke-SafeCommand "Enforcing ComfyUI Frontend $COMFYUI_FRONTEND_VERSION" {
             uv pip install "comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
         } -Optional
-    } else {
-        Write-Host "   Skipping ComfyUI frontend enforcement (INSTALL_COMFYUI_FRONTEND = `$false)"
     }
+    else { Write-Host "   Preserving or leaving the ComfyUI frontend unmanaged" }
 
-    Write-Success "Package versions enforced successfully"
+    Write-Success "Managed package versions enforced successfully"
 }
 
 # ============================================================================
-# [11/11] Create Launcher Scripts and PowerShell Aliases
+# [11/12] Create Launcher Scripts and PowerShell Aliases
 # ============================================================================
 if ($Steps[11]) {
 
-    Write-Header "[11/11] Creating Launcher Scripts and PowerShell Aliases"
+    Write-Header "[11/12] Creating Launcher Scripts and PowerShell Aliases"
 
     $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
 
     # --- Create per-version .bat launcher (named after alias, e.g., comfyui.bat, comfy2.bat) ---
     $launcherBat = Join-Path $COMFYUI_PARENT_DIR "$COMFYUI_ALIAS.bat"
-    $frontendBatSetup = if ($INSTALL_COMFYUI_FRONTEND) {
+    $frontendBatSetup = if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
 @"
 echo Ensuring frontend version $COMFYUI_FRONTEND_VERSION...
 "$VENV_PATH\Scripts\python.exe" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION
@@ -1293,7 +1899,7 @@ pause
 
     # --- Create per-version .ps1 launcher ---
     $launcherPs1 = Join-Path $COMFYUI_PARENT_DIR "$COMFYUI_ALIAS.ps1"
-    $frontendPsSetup = if ($INSTALL_COMFYUI_FRONTEND) {
+    $frontendPsSetup = if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
 @"
 Write-Host 'Ensuring frontend version $COMFYUI_FRONTEND_VERSION...' -ForegroundColor DarkGray
 & "$VENV_PATH\Scripts\python.exe" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION
@@ -1364,14 +1970,14 @@ call "$VENV_PATH\Scripts\activate.bat"
     # Add launch function if it doesn't already exist
     if ($profileContent -match "function $COMFYUI_ALIAS\b") {
         Write-Success "Function '$COMFYUI_ALIAS' already exists in profile - skipping"
-        if ((-not $INSTALL_COMFYUI_FRONTEND) -or (-not $PIN_FRONTEND_VERSION_IN_ALIAS)) {
+        if ((-not $Manage.Frontend) -or (-not $INSTALL_COMFYUI_FRONTEND) -or (-not $PIN_FRONTEND_VERSION_IN_ALIAS)) {
             Write-Warn "Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
         }
         if (-not [string]::IsNullOrWhiteSpace($COMFYUI_LAUNCH_ARGS)) {
             Write-Warn "Existing function may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
         }
     } else {
-        $frontendFunctionSetup = if ($INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
+        $frontendFunctionSetup = if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
             "    & `"$VENV_PATH\Scripts\python.exe`" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION`r`n"
         } else {
             ""
@@ -1413,9 +2019,9 @@ function envact {
     Write-Host ""
     Write-Host ("=" * 67) -ForegroundColor Cyan
     Write-Host "Launcher and alias configuration complete!" -ForegroundColor Cyan
-    if ($INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
+    if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
         Write-Host "  - $COMFYUI_ALIAS : activate environment, pin frontend, launch ComfyUI"
-    } elseif ($INSTALL_COMFYUI_FRONTEND) {
+    } elseif ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND) {
         Write-Host "  - $COMFYUI_ALIAS : activate environment and launch ComfyUI (frontend managed, alias pin disabled)"
     } else {
         Write-Host "  - $COMFYUI_ALIAS : activate environment and launch ComfyUI (frontend unmanaged)"
@@ -1433,6 +2039,130 @@ function envact {
 }
 
 # ============================================================================
+# [12/12] Compatibility Audit and Curated Repair
+# ============================================================================
+if ($Steps[12]) {
+    Write-Header "[12/12] Compatibility Audit and Curated Repair"
+
+    $pipBefore = @(uv pip check 2>&1)
+    $pipBeforeExit = $LASTEXITCODE
+    if ($pipBeforeExit -eq 0) {
+        Write-Success "pip check found no declared dependency conflicts"
+    }
+    else {
+        Write-Warn "Declared dependency conflicts before curated repair:"
+        $pipBefore | ForEach-Object { Write-Host "   $_" }
+    }
+    $pipBeforeText = $pipBefore -join "`n"
+
+    $curatedRepairs = @()
+    # Prefer versions shared by active inference packages and the wider runtime.
+    if ($pipBeforeText -match "(?i)(inference|inference-gpu).*requires.*filelock") { $curatedRepairs += "filelock==3.16.1" }
+    if ($pipBeforeText -match "(?i)(inference|inference-gpu).*requires.*opencv-python") { $curatedRepairs += "opencv-python==4.10.0.84" }
+    if ($pipBeforeText -match "(?i)(inference|inference-gpu).*requires.*packaging") { $curatedRepairs += "packaging==24.2" }
+    if ($pipBeforeText -match "(?i)(inference|inference-gpu).*requires.*rich") { $curatedRepairs += "rich==13.9.4" }
+    if ($pipBeforeText -match "(?i)(inference|inference-cli|inference-gpu).*requires.*nvidia-ml-py") { $curatedRepairs += "nvidia-ml-py==12.575.51" }
+    if ($pipBeforeText -match "(?i)aiortc.*requires.*av") { $curatedRepairs += "av==17.0.0" }
+
+    # Restore the modern managed side if an older installer run downgraded it.
+    # The legacy inference packages have mutually exclusive requirements here,
+    # so their remaining declarations are reported instead of winning by count.
+    if ($pipBeforeText -match "(?i)huggingface-hub.*requires.*click") { $curatedRepairs += "click==8.4.2" }
+    if ($pipBeforeText -match "(?i)(typing-inspection|google-genai|runwayml|onnx).*requires.*typing-extensions") { $curatedRepairs += "typing-extensions==4.16.0" }
+    if ($pipBeforeText -match "(?i)inference-cli.*requires.*aiohttp") { $curatedRepairs += "aiohttp==3.14.3" }
+    if ($pipBeforeText -match "(?i)inference-cli.*requires.*pillow") { $curatedRepairs += "pillow==12.3.0" }
+
+    if ($curatedRepairs.Count -gt 0) {
+        $repairConstraints = [System.IO.Path]::GetTempFileName()
+        $auditTorchVersion = Get-InstalledDistributionVersion "torch"
+        $auditTorchVisionVersion = Get-InstalledDistributionVersion "torchvision"
+        $auditTorchAudioVersion = Get-InstalledDistributionVersion "torchaudio"
+        $auditNumpyVersion = Get-InstalledDistributionVersion "numpy"
+        $auditTransformersVersion = Get-InstalledDistributionVersion "transformers"
+        [System.IO.File]::WriteAllLines($repairConstraints, [string[]]@(
+            "torch==$auditTorchVersion"
+            "torchvision==$auditTorchVisionVersion"
+            "torchaudio==$auditTorchAudioVersion"
+            "numpy==$auditNumpyVersion"
+            "transformers==$auditTransformersVersion"
+            "nvidia-ml-py>=12,<13"
+        ))
+        Write-Step ("Dry-running curated compatibility repairs: " + ($curatedRepairs -join ", "))
+        uv pip install --constraint $repairConstraints --dry-run @curatedRepairs
+        if ($LASTEXITCODE -eq 0) {
+            Invoke-SafeCommand "Applying curated compatibility repairs" {
+                uv pip install --constraint $repairConstraints @curatedRepairs
+            } -Optional | Out-Null
+        }
+        else {
+            Write-Warn "Curated repairs were skipped because the complete candidate set was not resolvable."
+        }
+        Remove-Item $repairConstraints -Force -ErrorAction SilentlyContinue
+    }
+
+    if ((Test-DistributionInstalled "flash-attn") -and -not (Test-PythonImport "import flash_attn")) {
+        Write-Warn "Flash Attention has a native-extension ABI failure."
+        Remove-FlashAttention
+    }
+    if (-not (Test-PythonImport "import kornia")) {
+        Remove-FlashAttention
+    }
+    if ((Test-DistributionInstalled "sageattention") -and -not (Test-SageAttention)) {
+        Write-Warn "SageAttention failed verification; replacing it with $SAGEATTENTION_FALLBACK_VERSION."
+        uv pip uninstall sageattention 2>$null | Out-Null
+        Invoke-SafeCommand "Installing SageAttention $SAGEATTENTION_FALLBACK_VERSION fallback" {
+            uv pip install --reinstall "sageattention==$SAGEATTENTION_FALLBACK_VERSION"
+        } -Optional | Out-Null
+    }
+
+    $coreImportFailure = $false
+    if (Test-PythonImport "import bz2") {
+        Write-Success "Python standard-library bz2 import"
+    }
+    else {
+        Write-Warn "Python cannot import bz2. Reinstall this Python version after installing bzip2 development support; no library workaround was created."
+        $coreImportFailure = $true
+    }
+    if (Test-PythonImport "import torch, torchvision, torchaudio") {
+        Write-Success "PyTorch, TorchVision, and TorchAudio imports"
+    }
+    else {
+        Write-Warn "The managed PyTorch stack failed its runtime import probe."
+        $coreImportFailure = $true
+    }
+    if (Test-PythonImport "import kornia") {
+        Write-Success "Kornia import"
+    }
+    else {
+        Write-Warn "Kornia still fails to import without Flash Attention."
+        $coreImportFailure = $true
+    }
+    if (Test-DistributionInstalled "nunchaku") {
+        if (Test-PythonImport "import nunchaku") { Write-Success "Nunchaku import" }
+        else { Write-Warn "Nunchaku is installed but failed its import probe." }
+    }
+    if (Test-DistributionInstalled "sageattention") {
+        if (Test-SageAttention) { Write-Success "SageAttention verification" }
+        else { Write-Warn "SageAttention remains unavailable; ComfyUI can use PyTorch attention." }
+    }
+
+    $pipAfter = @(uv pip check 2>&1)
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "pip check is clean after curated repair"
+    }
+    else {
+        Write-Warn "Remaining tolerated or irreconcilable dependency conflicts:"
+        $pipAfter | ForEach-Object { Write-Host "   $_" }
+        Write-Host "   No broad resolver was run; working custom-node ecosystems were left in place."
+    }
+
+    if ($coreImportFailure) {
+        throw "Compatibility audit failed because a ComfyUI core runtime import is broken."
+    }
+    Write-Success "Compatibility audit completed; optional unresolved conflicts are listed above"
+}
+
+# ============================================================================
 # Installation Complete
 # ============================================================================
 $COMFYUI_DIR = Join-Path $COMFYUI_PARENT_DIR $COMFYUI_DIR_NAME
@@ -1442,58 +2172,72 @@ Write-Host ("=" * 67) -ForegroundColor Green
 Write-Host "  Installation Complete!" -ForegroundColor Green
 Write-Host ("=" * 67) -ForegroundColor Green
 Write-Host ""
-Write-Host "Installed Versions:"
-Write-Host "  PyTorch: $PYTORCH_FULL_VERSION (with compatible torchvision/torchaudio)"
-Write-Host "  NumPy: $NUMPY_VERSION"
-Write-Host "  Transformers: $TRANSFORMERS_VERSION"
+$summaryTorchVersion = Get-InstalledDistributionVersion "torch"
+$summaryNumpyVersion = Get-InstalledDistributionVersion "numpy"
+$summaryTransformersVersion = Get-InstalledDistributionVersion "transformers"
+Write-Host "Installed Environment Versions:"
+Write-Host "  PyTorch: $summaryTorchVersion"
+Write-Host "  NumPy: $summaryNumpyVersion"
+Write-Host "  Transformers: $summaryTransformersVersion"
 Write-Host ""
 Write-Host "Environment: $VENV_PATH"
-Write-Host "ComfyUI Location: $COMFYUI_DIR"
+$comfyContextSelected = @((5, 6, 7, 8, 11) | Where-Object { $Steps[$_] }).Count -gt 0
+if ($comfyContextSelected) {
+    Write-Host "ComfyUI Location: $COMFYUI_DIR"
 Write-Host "Directory Storage:"
 Write-ComfyDirectoryState -Name "Models" -Path (Join-Path $COMFYUI_DIR "models") -Enabled $SYMLINK_MODELS
 Write-ComfyDirectoryState -Name "Input" -Path (Join-Path $COMFYUI_DIR "input") -Enabled $SYMLINK_INPUT
 Write-ComfyDirectoryState -Name "Output" -Path (Join-Path $COMFYUI_DIR "output") -Enabled $SYMLINK_OUTPUT
 Write-ComfyDirectoryState -Name "User Data" -Path (Join-Path $COMFYUI_DIR "user") -Enabled $SYMLINK_USER
 Write-ComfyDirectoryState -Name "Custom Nodes" -Path (Join-Path $COMFYUI_DIR "custom_nodes") -Enabled $SYMLINK_CUSTOM_NODES
+} else {
+    Write-Host "ComfyUI Checkout: not modified (configured location: $COMFYUI_DIR)"
+}
 Write-Host ""
-Write-Host "To start ComfyUI:"
+Write-Host "Available start methods for the configured checkout:"
 Write-Host ""
 
 $launcherBat = Join-Path $COMFYUI_PARENT_DIR "$COMFYUI_ALIAS.bat"
 $launcherPs1 = Join-Path $COMFYUI_PARENT_DIR "$COMFYUI_ALIAS.ps1"
 
-Write-Host "  Option 1 - Double-click batch launcher:" -ForegroundColor White
-Write-Host "    $launcherBat"
-Write-Host ""
-Write-Host "  Option 2 - PowerShell launcher:" -ForegroundColor White
-Write-Host "    $launcherPs1"
-Write-Host ""
+if (Test-Path $launcherBat) {
+    Write-Host "  Batch launcher: $launcherBat" -ForegroundColor White
+}
+if (Test-Path $launcherPs1) {
+    Write-Host "  PowerShell launcher: $launcherPs1" -ForegroundColor White
+}
 
 if (Test-Path $PROFILE) {
     $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
     if ($profileContent -and $profileContent -match "function $COMFYUI_ALIAS\b") {
-        Write-Host "  Option 3 - PowerShell alias (after reloading profile):" -ForegroundColor White
-        if ($INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
+        Write-Host "  PowerShell alias (after reloading profile):" -ForegroundColor White
+        if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
             Write-Host "    $COMFYUI_ALIAS          # Pin frontend + launch ComfyUI"
-        } elseif ($INSTALL_COMFYUI_FRONTEND) {
+        } elseif ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND) {
             Write-Host "    $COMFYUI_ALIAS          # Launch ComfyUI (frontend managed)"
         } else {
             Write-Host "    $COMFYUI_ALIAS          # Launch ComfyUI (frontend unmanaged)"
         }
         Write-Host "    envact           # Activate env only"
         Write-Host ""
-        Write-Host "  Option 4 - Manual activation:" -ForegroundColor White
+        Write-Host "  Manual activation:" -ForegroundColor White
     }
     else {
-        Write-Host "  Option 3 - Manual activation:" -ForegroundColor White
+        Write-Host "  Manual activation:" -ForegroundColor White
     }
 }
 else {
-    Write-Host "  Option 3 - Manual activation:" -ForegroundColor White
+    Write-Host "  Manual activation:" -ForegroundColor White
 }
-Write-Host "    & `"$VENV_PATH\Scripts\Activate.ps1`"; cd `"$COMFYUI_DIR`"; python main.py $COMFYUI_LAUNCH_ARGS"
+if ((Test-Path (Join-Path $VENV_PATH "Scripts\python.exe")) -and (Test-Path (Join-Path $COMFYUI_DIR "main.py"))) {
+    Write-Host "    & `"$VENV_PATH\Scripts\Activate.ps1`"; cd `"$COMFYUI_DIR`"; python main.py $COMFYUI_LAUNCH_ARGS"
+} else {
+    Write-Host "  No verified launcher for the configured checkout was found in this run."
+}
 Write-Host ""
 
+Save-InstallerDefaults
+Write-Host ""
 Read-Host "Press Enter to exit"
 }
 finally {
@@ -1502,7 +2246,7 @@ finally {
     } else {
         $env:UV_EXCLUDE = $ORIGINAL_UV_EXCLUDE
     }
-    if ($FRONTEND_EXCLUDE_FILE -and (Test-Path $FRONTEND_EXCLUDE_FILE)) {
-        Remove-Item $FRONTEND_EXCLUDE_FILE -Force -ErrorAction SilentlyContinue
+    if ($PACKAGE_EXCLUDE_FILE -and (Test-Path $PACKAGE_EXCLUDE_FILE)) {
+        Remove-Item $PACKAGE_EXCLUDE_FILE -Force -ErrorAction SilentlyContinue
     }
 }
