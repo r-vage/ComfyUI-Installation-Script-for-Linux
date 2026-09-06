@@ -1818,7 +1818,6 @@ if ($Steps[6]) {
     Write-Host "Cloning sampling & scheduling..." -ForegroundColor White
     Copy-IfMissing "https://github.com/r-vage/RES4LYF.git"
     Copy-IfMissing "https://github.com/mcmonkeyprojects/sd-dynamic-thresholding.git"
-    Copy-IfMissing "https://github.com/r-vage/ComfyUI-Raffle"
     Copy-IfMissing "https://github.com/ChangeTheConstants/SeedVarianceEnhancer"
     Copy-IfMissing "https://github.com/wildminder/ComfyUI-DyPE"
     Copy-IfMissing "https://github.com/Artificial-Sweetener/comfyui-WhiteRabbit"
@@ -1871,7 +1870,7 @@ if ($Steps[6]) {
     Copy-IfMissing "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"
     Copy-IfMissing "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
     Copy-IfMissing "https://github.com/stduhpf/ComfyUI-WanMoeKSampler.git"
-    Copy-IfMissing "https://github.com/Lightricks/ComfyUI-LTXVideo"
+    Copy-IfMissing "https://github.com/r-vage/ComfyUI-LTXVideo.git"
 
     Pop-Location
 }

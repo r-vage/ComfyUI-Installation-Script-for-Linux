@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-09-06
+
+### Changed
+- Linux now refreshes and builds the latest official SageAttention source for every supported NVIDIA CUDA variant, including CUDA 12.8 and CUDA 13.0
+- Preferred SageAttention 2 verification distinguishes the 1.x fallback and checks the GPU architecture API required by current custom-node integrations
+- Failed Linux SageAttention refreshes retain a working installation when possible and otherwise install the no-compile 1.0.6 fallback, with a warning that v2-only integrations remain unavailable
+- Linux SageAttention preflight prefers a matching side-by-side `/usr/local/cuda-<version>` toolkit and accurately reports when a verified existing build is retained
+- Linux Step 8 can install matching versioned NVIDIA CUDA compiler and development-library packages when PyTorch's CUDA version changes, while preserving older toolkits and the global CUDA alternative
+- SageAttention source builds isolate CUDA paths and compiler/linker flags from stale toolkit environment variables
+
+**Changed files:** `install_comfy_env.sh`, `README.md`, `CHANGELOG.md`, `pyproject.toml`
+
+---
+
 ## [0.13.1] - 2026-08-16
 
 ### Added

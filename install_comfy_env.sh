@@ -12,22 +12,23 @@ export UV_LINK_MODE=copy
 # ============================================
 # Only this marked block is rewritten after a successful run.
 # BEGIN COMFYUI INSTALLER DEFAULTS
-BASE_PATH="/mnt/data/AI"
-PYTHON_VERSION="3.12.10"
-PYTORCH_VERSION="2.9.1"
-PYTORCH_WHEEL_VARIANT="cu128"
-NUMPY_VERSION="2.2.6"
-TRANSFORMERS_VERSION="5.3.0"
-DEFAULT_COMFYUI_VERSION="0.28.0"
-DEFAULT_FRONTEND_VERSION="1.45.21"
-DEFAULT_ALIAS="comfy"
-COMFYUI_LAUNCH_ARGS="--disable-pinned-memory"
+BASE_PATH=/mnt/data/AI
+PYTHON_VERSION=3.12.10
+PYTORCH_VERSION=2.9.1
+PYTORCH_WHEEL_VARIANT=cu130
+NUMPY_VERSION=2.2.6
+TRANSFORMERS_VERSION=5.3.0
+DEFAULT_COMFYUI_VERSION=0.34.0
+DEFAULT_FRONTEND_VERSION=1.45.21
+DEFAULT_ALIAS=comfy
+COMFYUI_LAUNCH_ARGS=--disable-pinned-memory
 SYMLINK_MODELS=true
 SYMLINK_INPUT=true
 SYMLINK_OUTPUT=true
 SYMLINK_USER=true
 SYMLINK_CUSTOM_NODES=true
 INSTALL_NUNCHAKU=true
+INSTALL_MATCHING_CUDA_TOOLKIT=true
 INSTALL_COMFYUI_FRONTEND=true
 PIN_FRONTEND_VERSION_IN_ALIAS=false
 # END COMFYUI INSTALLER DEFAULTS
@@ -36,7 +37,8 @@ PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
 NUNCHAKU_VERSION="1.2.1"
 NUNCHAKU_SUPPORTED_PYTHON_TAGS="cp310 cp311 cp312 cp313"
 FLASH_ATTN_VERSION="2.8.3"
-SAGEATTENTION_VERSION="2.2.0"
+SAGEATTENTION_REPOSITORY="https://github.com/thu-ml/SageAttention.git"
+SAGEATTENTION_REF="main"
 SAGEATTENTION_FALLBACK_VERSION="1.0.6"
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
 
@@ -56,6 +58,7 @@ EMBEDDED_SYMLINK_OUTPUT=$SYMLINK_OUTPUT
 EMBEDDED_SYMLINK_USER=$SYMLINK_USER
 EMBEDDED_SYMLINK_CUSTOM_NODES=$SYMLINK_CUSTOM_NODES
 EMBEDDED_INSTALL_NUNCHAKU=$INSTALL_NUNCHAKU
+EMBEDDED_INSTALL_MATCHING_CUDA_TOOLKIT=$INSTALL_MATCHING_CUDA_TOOLKIT
 EMBEDDED_INSTALL_FRONTEND=$INSTALL_COMFYUI_FRONTEND
 EMBEDDED_PIN_FRONTEND=$PIN_FRONTEND_VERSION_IN_ALIAS
 
@@ -410,6 +413,12 @@ elif [ "$CONFIG_MODE" = "advanced" ]; then
         preserve) MANAGE_NUNCHAKU=false ;;
     esac
 
+    prompt_policy CUDA_TOOLKIT_POLICY "Install matching CUDA build toolkit when missing" "$($INSTALL_MATCHING_CUDA_TOOLKIT && echo y || echo n)"
+    case "$CUDA_TOOLKIT_POLICY" in
+        true) INSTALL_MATCHING_CUDA_TOOLKIT=true ;;
+        false|preserve) INSTALL_MATCHING_CUDA_TOOLKIT=false ;;
+    esac
+
     prompt_policy FRONTEND_POLICY "Manage ComfyUI frontend package" "$($INSTALL_COMFYUI_FRONTEND && echo y || echo n)"
     case "$FRONTEND_POLICY" in
         true)
@@ -583,47 +592,184 @@ verify_flash_attention_import() {
     python -c 'import flash_attn' >/dev/null 2>&1
 }
 
+cuda_toolkit_version() {
+    "$1/bin/nvcc" --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1
+}
+
+install_matching_cuda_toolkit() {
+    local torch_cuda="$1"
+    local toolkit_home="/usr/local/cuda-${torch_cuda}"
+    local compiler_package="cuda-compiler-${torch_cuda//./-}"
+    local libraries_dev_package="cuda-libraries-dev-${torch_cuda//./-}"
+    local package
+
+    if [ -x "$toolkit_home/bin/nvcc" ] && \
+        [ "$(cuda_toolkit_version "$toolkit_home")" = "$torch_cuda" ] && \
+        [ -f "$toolkit_home/include/cusparse.h" ]; then
+        return 0
+    fi
+
+    if ! $INSTALL_MATCHING_CUDA_TOOLKIT; then
+        echo "ℹ️  Automatic CUDA compiler toolkit installation is disabled."
+        return 1
+    fi
+
+    echo "Installing the CUDA $torch_cuda compiler and development libraries side-by-side (requires sudo)..."
+    if command -v apt-get >/dev/null 2>&1; then
+        for package in "$compiler_package" "$libraries_dev_package"; do
+            if ! apt-cache show "$package" >/dev/null 2>&1; then
+                echo "⚠️  $package is unavailable from the configured APT repositories."
+                return 1
+            fi
+        done
+        sudo apt-get install -y "$compiler_package" "$libraries_dev_package" || return 1
+    elif command -v dnf >/dev/null 2>&1; then
+        for package in "$compiler_package" "$libraries_dev_package"; do
+            if ! dnf --quiet list --available "$package" >/dev/null 2>&1 && ! rpm -q "$package" >/dev/null 2>&1; then
+                echo "⚠️  $package is unavailable from the configured DNF repositories."
+                return 1
+            fi
+        done
+        sudo dnf install -y "$compiler_package" "$libraries_dev_package" || return 1
+    elif command -v yum >/dev/null 2>&1; then
+        for package in "$compiler_package" "$libraries_dev_package"; do
+            if ! yum --quiet list available "$package" >/dev/null 2>&1 && ! rpm -q "$package" >/dev/null 2>&1; then
+                echo "⚠️  $package is unavailable from the configured Yum repositories."
+                return 1
+            fi
+        done
+        sudo yum install -y "$compiler_package" "$libraries_dev_package" || return 1
+    elif command -v zypper >/dev/null 2>&1; then
+        for package in "$compiler_package" "$libraries_dev_package"; do
+            if ! zypper --non-interactive search --match-exact "$package" 2>/dev/null | grep -Fq "$package"; then
+                echo "⚠️  $package is unavailable from the configured Zypper repositories."
+                return 1
+            fi
+        done
+        sudo zypper --non-interactive install "$compiler_package" "$libraries_dev_package" || return 1
+    else
+        echo "⚠️  Automatic versioned CUDA toolkit installation is not supported by this package manager."
+        return 1
+    fi
+
+    if [ ! -x "$toolkit_home/bin/nvcc" ] || \
+        [ "$(cuda_toolkit_version "$toolkit_home")" != "$torch_cuda" ] || \
+        [ ! -f "$toolkit_home/include/cusparse.h" ]; then
+        echo "⚠️  CUDA $torch_cuda packages installed, but the compiler toolkit is incomplete at $toolkit_home."
+        return 1
+    fi
+
+    echo "✓ CUDA $torch_cuda compiler toolkit is available at $toolkit_home"
+}
+
 verify_sage_attention() {
     python - <<'PY'
 import importlib.metadata
-import sageattention
+from packaging.version import Version
 
 version = importlib.metadata.version("sageattention")
-if version.startswith("2."):
-    import torch
-    from sageattention import sageattn
+if Version(version).major < 2:
+    raise RuntimeError(f"SageAttention {version} is obsolete; version 2 or newer is required")
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is unavailable for the SageAttention 2 smoke test")
-    query = torch.randn((1, 4, 128, 64), device="cuda", dtype=torch.float16)
-    sageattn(query, query, query, tensor_layout="HND")
-    torch.cuda.synchronize()
+import torch
+from sageattention import sageattn
+from sageattention.core import get_cuda_arch_versions
+
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA is unavailable for the SageAttention smoke test")
+
+expected_arch = "sm" + "".join(map(str, torch.cuda.get_device_capability()))
+available_arches = get_cuda_arch_versions()
+if expected_arch not in available_arches:
+    raise RuntimeError(
+        f"SageAttention does not expose the active GPU architecture "
+        f"{expected_arch}: {available_arches}"
+    )
+
+query = torch.randn((1, 4, 128, 64), device="cuda", dtype=torch.float16)
+sageattn(query, query, query, tensor_layout="HND")
+torch.cuda.synchronize()
 PY
+}
+
+sage_attention_is_modern() {
+    local major
+    major=$(python -c 'import importlib.metadata; from packaging.version import Version; print(Version(importlib.metadata.version("sageattention")).major)' 2>/dev/null) || return 1
+    [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -ge 2 ]
+}
+
+verify_sage_attention_fallback() {
+    python - <<'PY'
+import importlib.metadata
+import sageattention
+from packaging.version import Version
+
+version = importlib.metadata.version("sageattention")
+if Version(version).major >= 2:
+    raise RuntimeError(f"SageAttention {version} is not the legacy fallback")
+PY
+}
+
+install_sage_attention_fallback() {
+    echo "Installing SageAttention $SAGEATTENTION_FALLBACK_VERSION as the no-compile fallback..."
+    if uv pip install --reinstall --no-deps "sageattention==$SAGEATTENTION_FALLBACK_VERSION" && verify_sage_attention_fallback; then
+        echo "⚠️  SageAttention $SAGEATTENTION_FALLBACK_VERSION fallback installed; integrations that require SageAttention 2 remain unavailable."
+        return 0
+    fi
+
+    echo "⚠️  SageAttention fallback installation failed; SageAttention is unavailable."
+    uv pip uninstall sageattention >/dev/null 2>&1 || true
+    return 1
 }
 
 install_sage_attention() {
     local constraints_file="$1"
-    local cuda_home torch_cuda nvcc_cuda gpu_arch available_kb available_memory_kb
+    local cuda_home matching_cuda_home torch_cuda nvcc_cuda gpu_arch available_kb available_memory_kb
+    local existing_sage_usable=false
+    local existing_fallback_usable=false
     local sage_build_ready=true
 
-    cuda_home=$(python -c 'from torch.utils.cpp_extension import CUDA_HOME; print(CUDA_HOME or "")' 2>/dev/null || true)
     torch_cuda=$(python -c 'import torch; print(torch.version.cuda or "")' 2>/dev/null || true)
     gpu_arch=$(python -c 'import torch; print(".".join(map(str, torch.cuda.get_device_capability()))) if torch.cuda.is_available() else print("")' 2>/dev/null || true)
 
+    if [ -n "$torch_cuda" ]; then
+        install_matching_cuda_toolkit "$torch_cuda" || true
+    fi
+
+    cuda_home=$(python -c 'from torch.utils.cpp_extension import CUDA_HOME; print(CUDA_HOME or "")' 2>/dev/null || true)
+
+    # Prefer a matching side-by-side toolkit without changing the system-wide
+    # /usr/local/cuda alternative. CUDA packages conventionally use this path.
+    matching_cuda_home="/usr/local/cuda-${torch_cuda}"
+    if [ -n "$torch_cuda" ] && [ -x "$matching_cuda_home/bin/nvcc" ]; then
+        cuda_home="$matching_cuda_home"
+    fi
+
+    if distribution_installed sageattention; then
+        if sage_attention_is_modern && verify_sage_attention; then
+            existing_sage_usable=true
+        elif ! sage_attention_is_modern && verify_sage_attention_fallback; then
+            existing_fallback_usable=true
+        else
+            echo "Removing incompatible SageAttention installation..."
+            uv pip uninstall sageattention >/dev/null 2>&1 || true
+        fi
+    fi
+
     if [ -z "$cuda_home" ] || [ ! -x "$cuda_home/bin/nvcc" ]; then
-        echo "⚠️  SageAttention $SAGEATTENTION_VERSION build skipped: nvcc was not found in CUDA_HOME."
+        echo "⚠️  Latest SageAttention build skipped: nvcc was not found in CUDA_HOME."
         sage_build_ready=false
     else
         nvcc_cuda=$("$cuda_home/bin/nvcc" --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)
         if [ "$nvcc_cuda" != "$torch_cuda" ]; then
-            echo "⚠️  SageAttention $SAGEATTENTION_VERSION build skipped: CUDA toolkit $nvcc_cuda does not match Torch CUDA $torch_cuda."
+            echo "⚠️  Latest SageAttention build skipped: CUDA toolkit $nvcc_cuda does not match Torch CUDA $torch_cuda."
             sage_build_ready=false
         fi
     fi
     case "$gpu_arch" in
         8.0|8.6|8.9|9.0|10.0|12.0|12.1) ;;
         *)
-            echo "⚠️  SageAttention $SAGEATTENTION_VERSION build skipped: unsupported or unavailable GPU architecture ${gpu_arch:-unknown}."
+            echo "⚠️  Latest SageAttention build skipped: unsupported or unavailable GPU architecture ${gpu_arch:-unknown}."
             sage_build_ready=false
             ;;
     esac
@@ -632,30 +778,55 @@ install_sage_attention() {
     available_kb=$(df -Pk "${TMPDIR:-/tmp}" 2>/dev/null | awk 'NR==2 {print $4}')
     available_memory_kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null)
     if [ -z "$available_kb" ] || [ "$available_kb" -lt 10485760 ]; then
-        echo "⚠️  SageAttention $SAGEATTENTION_VERSION build skipped: at least 10 GiB of temporary disk space is required."
+        echo "⚠️  Latest SageAttention build skipped: at least 10 GiB of temporary disk space is required."
         sage_build_ready=false
     fi
     if [ -z "$available_memory_kb" ] || [ "$available_memory_kb" -lt 16777216 ]; then
-        echo "⚠️  SageAttention $SAGEATTENTION_VERSION build skipped: at least 16 GiB of available memory is required."
+        echo "⚠️  Latest SageAttention build skipped: at least 16 GiB of available memory is required."
         sage_build_ready=false
     fi
 
     if $sage_build_ready; then
-        echo "Building SageAttention $SAGEATTENTION_VERSION from the official PyPI source distribution..."
-        uv pip uninstall sageattention >/dev/null 2>&1 || true
-        if MAX_JOBS=4 NVCC_APPEND_FLAGS="--threads 4" uv pip install --constraint "$constraints_file" --reinstall "sageattention==$SAGEATTENTION_VERSION" --no-binary sageattention --no-build-isolation && verify_sage_attention; then
-            echo "✓ SageAttention $SAGEATTENTION_VERSION built and passed its CUDA smoke test"
+        echo "Building the latest SageAttention from ${SAGEATTENTION_REPOSITORY}@${SAGEATTENTION_REF}..."
+        if CUDA_HOME="$cuda_home" CUDA_PATH="$cuda_home" CUDA_VERSION="$torch_cuda" \
+            CUDACXX="$cuda_home/bin/nvcc" PATH="$cuda_home/bin:$PATH" \
+            CFLAGS="-I$cuda_home/include" CXXFLAGS="-I$cuda_home/include" \
+            LDFLAGS="-L$cuda_home/lib64" LIBRARY_PATH="$cuda_home/lib64" \
+            LD_LIBRARY_PATH="$cuda_home/lib64" MAX_JOBS=4 \
+            NVCC_APPEND_FLAGS="--threads 4" uv pip install \
+            --constraint "$constraints_file" \
+            --refresh-package sageattention \
+            --reinstall \
+            --no-build-isolation \
+            "git+${SAGEATTENTION_REPOSITORY}@${SAGEATTENTION_REF}" && verify_sage_attention; then
+            echo "✓ Latest SageAttention source build passed its CUDA and architecture smoke tests"
             return 0
         fi
-        echo "⚠️  SageAttention $SAGEATTENTION_VERSION build or smoke test failed; using the Triton fallback."
-        uv pip uninstall sageattention >/dev/null 2>&1 || true
+        echo "⚠️  Latest SageAttention build or smoke test failed."
+        if $existing_sage_usable && sage_attention_is_modern && verify_sage_attention; then
+            echo "ℹ️  The previously working SageAttention 2 installation was retained."
+            return 0
+        fi
+        if $existing_fallback_usable && ! sage_attention_is_modern && verify_sage_attention_fallback; then
+            echo "ℹ️  The existing SageAttention $SAGEATTENTION_FALLBACK_VERSION fallback was retained."
+            return 0
+        fi
+        # A newly installed v2 package may have replaced the old package before
+        # failing its smoke test. Do not trust the pre-build state after this point.
+        existing_sage_usable=false
+        existing_fallback_usable=false
     fi
 
-    if uv pip install --constraint "$constraints_file" --reinstall "sageattention==$SAGEATTENTION_FALLBACK_VERSION" && verify_sage_attention; then
-        echo "✓ SageAttention $SAGEATTENTION_FALLBACK_VERSION installed and import-verified"
+    if $existing_sage_usable; then
+        echo "ℹ️  SageAttention rebuild was skipped; the existing installation passed the CUDA and architecture smoke tests."
         return 0
     fi
-    echo "⚠️  SageAttention could not be installed or verified (optional)"
+    if $existing_fallback_usable; then
+        echo "⚠️  SageAttention 2 is unavailable; retaining the existing $SAGEATTENTION_FALLBACK_VERSION fallback."
+        return 0
+    fi
+
+    install_sage_attention_fallback || true
     return 0
 }
 
@@ -704,6 +875,9 @@ elif $INSTALL_NUNCHAKU; then
     echo "  Nunchaku: Enabled ($NUNCHAKU_VERSION, $NUNCHAKU_CUDA_VARIANT)"
 else
     echo "  Nunchaku: Disabled/unavailable for $HARDWARE_BACKEND"
+fi
+if [ "$HARDWARE_BACKEND" = "nvidia" ]; then
+    $INSTALL_MATCHING_CUDA_TOOLKIT && echo "  CUDA Build Toolkit: Install matching version if missing" || echo "  CUDA Build Toolkit: Preserve installed toolkits"
 fi
 echo "  Shell: $DETECTED_SHELL ($SHELL_CONFIG_FILE)"
 echo ""
@@ -770,6 +944,7 @@ offer_save_defaults() {
     local save_user=$EMBEDDED_SYMLINK_USER
     local save_nodes=$EMBEDDED_SYMLINK_CUSTOM_NODES
     local save_nunchaku=$EMBEDDED_INSTALL_NUNCHAKU
+    local save_cuda_toolkit=$EMBEDDED_INSTALL_MATCHING_CUDA_TOOLKIT
     local save_manage_frontend=$EMBEDDED_INSTALL_FRONTEND
     local save_pin_frontend=$EMBEDDED_PIN_FRONTEND
 
@@ -801,6 +976,7 @@ offer_save_defaults() {
         fi
         $STEP_5 && $MANAGE_COMFYUI && save_comfy="$INPUT_COMFYUI_VERSION"
         $STEP_3 && $MANAGE_NUNCHAKU && save_nunchaku=$INSTALL_NUNCHAKU
+        $STEP_8 && save_cuda_toolkit=$INSTALL_MATCHING_CUDA_TOOLKIT
         if $STEP_11 && $MANAGE_LAUNCHER; then
             save_alias="$COMFYUI_ALIAS"
             save_args="$COMFYUI_LAUNCH_ARGS"
@@ -840,6 +1016,7 @@ offer_save_defaults() {
         echo "SYMLINK_USER=$save_user"
         echo "SYMLINK_CUSTOM_NODES=$save_nodes"
         echo "INSTALL_NUNCHAKU=$save_nunchaku"
+        echo "INSTALL_MATCHING_CUDA_TOOLKIT=$save_cuda_toolkit"
         echo "INSTALL_COMFYUI_FRONTEND=$save_manage_frontend"
         echo "PIN_FRONTEND_VERSION_IN_ALIAS=$save_pin_frontend"
         echo "# END COMFYUI INSTALLER DEFAULTS"
@@ -1725,7 +1902,6 @@ echo ""
 echo "Cloning sampling & scheduling..."
 clone_if_missing "https://github.com/r-vage/RES4LYF.git"
 clone_if_missing "https://github.com/mcmonkeyprojects/sd-dynamic-thresholding.git"
-clone_if_missing "https://github.com/r-vage/ComfyUI-Raffle"
 clone_if_missing "https://github.com/ChangeTheConstants/SeedVarianceEnhancer"
 clone_if_missing "https://github.com/wildminder/ComfyUI-DyPE"
 clone_if_missing "https://github.com/Artificial-Sweetener/comfyui-WhiteRabbit"
@@ -1778,7 +1954,7 @@ clone_if_missing "https://github.com/kijai/ComfyUI-WanVideoWrapper"
 clone_if_missing "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"
 clone_if_missing "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
 clone_if_missing "https://github.com/stduhpf/ComfyUI-WanMoeKSampler.git"
-clone_if_missing "https://github.com/Lightricks/ComfyUI-LTXVideo"
+clone_if_missing "https://github.com/r-vage/ComfyUI-LTXVideo.git"
 
 
 fi  # End STEP_6
@@ -2276,10 +2452,16 @@ if $STEP_12; then
     if ! verify_kornia_import; then
         remove_flash_attention
     fi
-    if distribution_installed sageattention && ! verify_sage_attention; then
-        echo "⚠️  SageAttention failed verification; replacing it with $SAGEATTENTION_FALLBACK_VERSION."
-        uv pip uninstall sageattention >/dev/null 2>&1 || true
-        uv pip install --reinstall "sageattention==$SAGEATTENTION_FALLBACK_VERSION" || true
+    if distribution_installed sageattention; then
+        if sage_attention_is_modern; then
+            if ! verify_sage_attention; then
+                echo "⚠️  SageAttention 2 failed verification; installing the no-compile fallback."
+                install_sage_attention_fallback || true
+            fi
+        elif ! verify_sage_attention_fallback; then
+            echo "⚠️  SageAttention fallback failed its import check; reinstalling it."
+            install_sage_attention_fallback || true
+        fi
     fi
 
     CORE_IMPORT_FAILURE=false
@@ -2309,8 +2491,10 @@ if $STEP_12; then
         fi
     fi
     if distribution_installed sageattention; then
-        if verify_sage_attention; then
+        if sage_attention_is_modern && verify_sage_attention; then
             echo "✓ SageAttention verification"
+        elif verify_sage_attention_fallback; then
+            echo "⚠️  SageAttention $SAGEATTENTION_FALLBACK_VERSION fallback import; SageAttention 2 integrations are unavailable."
         else
             echo "⚠️  SageAttention remains unavailable; ComfyUI can use PyTorch attention."
         fi

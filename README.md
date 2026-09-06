@@ -9,7 +9,7 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 - **Version Control**: Pin specific versions of ComfyUI, PyTorch, NumPy, Transformers, and other critical packages
 - **Optional Frontend Pinning**: Pin a frontend per launcher or preserve a custom/existing frontend package
 - **GPU Acceleration**: Supports CUDA 13.0, CUDA 12.8, CUDA 12.6, Linux ROCm 7.1, native Windows ROCm 7.2.1, and CPU-only installations
-- **Performance Optimization**: Verifies exact Flash Attention wheels and builds SageAttention only with a matching CUDA toolchain
+- **Performance Optimization**: Verifies exact Flash Attention wheels; Linux builds the latest SageAttention source with a matching CUDA toolchain
 - **Custom Node Collection**: Automatically clones and configures 51 popular custom nodes
 - **Lowercase Cloning**: Clones custom nodes with lowercase directory names to match ComfyUI-Manager convention
 - **Selective Installation**: Choose which components to install via interactive menu
@@ -243,6 +243,7 @@ Migration is conservative: populated local data is copied only when the shared t
 
 ```bash
 INSTALL_NUNCHAKU=true               # Nunchaku acceleration (requires NVIDIA GPU)
+INSTALL_MATCHING_CUDA_TOOLKIT=true  # Install matching versioned CUDA build packages on Linux
 INSTALL_COMFYUI_FRONTEND=true       # Pin/install the configured frontend package
 PIN_FRONTEND_VERSION_IN_ALIAS=false # Do not reinstall the frontend from the shell/profile alias
 COMFYUI_LAUNCH_ARGS="--multi-user --disable-pinned-memory"
@@ -254,7 +255,7 @@ COMFYUI_LAUNCH_ARGS="--multi-user --disable-pinned-memory"
 
 Step 8 treats compiled attention extensions as ABI-specific. Linux installs Flash Attention only when the exact official upstream wheel URL exists for the configured Python, Torch, and CUDA-12 stack, forces replacement of an older same-version wheel, and verifies both Flash Attention and Kornia imports. Windows removes Flash Attention because upstream does not publish a matching official Windows wheel. When Flash Attention is unavailable or broken, it is removed so ComfyUI can use PyTorch attention instead of failing during Kornia import.
 
-SageAttention 2.2.0 is built from its official source only after the installer verifies a matching Torch/CUDA toolkit, `nvcc`, compiler, Ninja, supported GPU architecture, temporary disk space, and memory. A failed preflight, build, or CUDA smoke test falls back to pinned SageAttention 1.0.6.
+On Linux, the latest SageAttention source is refreshed from the [official upstream `main` branch](https://github.com/thu-ml/SageAttention) and built only after the installer verifies a matching Torch/CUDA toolkit, `nvcc`, compiler, Ninja, supported GPU architecture, temporary disk space, and memory. This applies to every supported NVIDIA CUDA variant, including `cu128` and `cu130`; SageAttention is not restricted to CUDA 13. When the selected PyTorch CUDA version changes, Step 8 automatically installs NVIDIA's matching versioned `cuda-compiler-X-Y` and `cuda-libraries-dev-X-Y` packages and prefers their side-by-side path, such as `/usr/local/cuda-13.0`, without uninstalling older toolkits or changing the system-wide `/usr/local/cuda` alternative. System package installation runs through `sudo`, so the user can enter a password directly in the console when required. This requires the NVIDIA CUDA package repository to already be configured and can be disabled in Advanced mode. The installer also isolates the source build from stale CUDA environment variables. PyTorch wheels continue to supply their own CUDA runtime and cuDNN libraries. A failed refresh retains an already-working SageAttention installation; if no usable installation remains after a failed toolkit check, compilation, or v2 smoke test, the installer uses the no-compile SageAttention 1.0.6 fallback. That fallback does not satisfy integrations such as the MiniMax H3 patch that explicitly require SageAttention 2. The Windows installer retains its separately documented pinned build and fallback behavior.
 
 ComfyUI-Manager-disabled nodes are preserved. Step 6 recognizes repositories moved into `custom_nodes/.disabled/<node>` and does not clone a second active copy. Step 7 never installs requirements from that quarantine folder or from legacy top-level `<node>.disabled` directories.
 
@@ -271,7 +272,7 @@ The script is divided into 12 steps that you can run selectively:
 5. **ComfyUI Core** - ComfyUI base installation and requirements
 6. **Custom Nodes** - 51 popular custom nodes (see list below)
 7. **Custom Node Dependencies** - Install requirements for active custom nodes; Manager-disabled and legacy `.disabled` nodes are skipped
-8. **Performance Libraries** - llama-cpp-python, verified official Flash Attention wheels, and SageAttention build-or-fallback
+8. **Performance Libraries** - llama-cpp-python, verified official Flash Attention wheels, and a verified latest-source SageAttention build with a no-compile fallback
 9. **Upgrade/Pin Packages** - Upgrade selected direct packages without broadly upgrading already-compatible transitive runtime dependencies
 10. **Enforce Versions** - Force exact versions of PyTorch, NumPy, Transformers, ComfyUI Frontend
 11. **Shell Aliases** - Add user-chosen launch alias and `envact` alias to shell config
@@ -475,7 +476,7 @@ sudo dnf install make gcc patch zlib-devel bzip2 bzip2-devel readline-devel sqli
 
 ### Nunchaku, Flash Attention, or SageAttention Is Unavailable
 
-Nunchaku and the compiled attention accelerators require an NVIDIA configuration with an exact compatible Python, Torch, CUDA, and platform combination. Missing Flash Attention is not fatal: the installers remove an ABI-incompatible extension and ComfyUI uses PyTorch attention. SageAttention falls back to version 1.0.6 when version 2.2.0 cannot be built and smoke-tested safely.
+Nunchaku and the compiled attention accelerators require an NVIDIA configuration with an exact compatible Python, Torch, CUDA, and platform combination. Missing Flash Attention is not fatal: the installers remove an ABI-incompatible extension and ComfyUI uses PyTorch attention. On Linux, a SageAttention preflight, source-build, or smoke-test failure preserves a working installation when possible and otherwise installs SageAttention 1.0.6 as a no-compile fallback. The fallback does not enable nodes that explicitly require SageAttention 2. Windows retains its separate pinned SageAttention policy described below.
 
 If `bz2` or another Python standard-library module cannot import, install the operating system development package and rebuild that Python version through pyenv. The installer reports this condition and never creates a library symlink workaround.
 
