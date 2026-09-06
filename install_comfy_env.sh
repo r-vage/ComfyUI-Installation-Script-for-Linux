@@ -2154,11 +2154,20 @@ echo ""
 # Ensure COMFYUI_DIR is set (may not be if STEP_5 was skipped)
 COMFYUI_DIR="${COMFYUI_DIR:-${COMFYUI_PARENT_DIR}/${COMFYUI_DIR_NAME}}"
 
-# Function to add aliases to a bash/zsh config file (non-destructive, additive only)
+# Function to add or update aliases in a bash/zsh config file.
 add_bash_aliases() {
     local config_file="$1"
     local config_name="$2"
     local added=0
+    local alias_comment alias_definition
+
+    if $MANAGE_FRONTEND && $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
+        alias_comment="# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
+        alias_definition="alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
+    else
+        alias_comment="# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend not pinned on launch)"
+        alias_definition="alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
+    fi
 
     # Show existing ComfyUI-related aliases for context
     if [ -f "$config_file" ]; then
@@ -2171,25 +2180,29 @@ add_bash_aliases() {
         fi
     fi
 
-    # Add launch alias if it doesn't already exist
+    # An explicitly selected alias name is authoritative. The prompt suggests a
+    # free name by default, but selecting an existing name should retarget it.
     if [ -f "$config_file" ] && grep -q "^alias ${COMFYUI_ALIAS}=" "$config_file"; then
-        echo "  ✓ Alias '${COMFYUI_ALIAS}' already exists in $config_name — skipping"
-        if { ! $MANAGE_FRONTEND || ! $INSTALL_COMFYUI_FRONTEND || ! $PIN_FRONTEND_VERSION_IN_ALIAS; } && grep -E "^alias ${COMFYUI_ALIAS}=.*comfyui-frontend-package" "$config_file" >/dev/null 2>&1; then
-            echo "  ⚠️  Existing alias still pins the frontend; remove it and rerun step 11 to regenerate it"
-        fi
-        if [ -n "$COMFYUI_LAUNCH_ARGS" ] && ! grep -E "^alias ${COMFYUI_ALIAS}=" "$config_file" | grep -Fq -- "$COMFYUI_LAUNCH_ARGS"; then
-            echo "  ⚠️  Existing alias may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
-        fi
+        local temp_config
+        temp_config=$(mktemp "${config_file}.tmp.XXXXXX")
+        awk \
+            -v comment_prefix="# ComfyUI: ${COMFYUI_ALIAS} -> " \
+            -v alias_prefix="alias ${COMFYUI_ALIAS}=" \
+            -v replacement_comment="$alias_comment" \
+            -v replacement_alias="$alias_definition" '
+                index($0, comment_prefix) == 1 { print replacement_comment; next }
+                index($0, alias_prefix) == 1 { print replacement_alias; next }
+                { print }
+            ' "$config_file" > "$temp_config"
+        chmod --reference="$config_file" "$temp_config"
+        mv "$temp_config" "$config_file"
+        echo "  ✓ Updated alias '${COMFYUI_ALIAS}' in $config_name"
+        added=1
     else
         {
             echo ""
-            if $MANAGE_FRONTEND && $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
-                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
-                echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
-            else
-                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend not pinned on launch)"
-                echo "alias ${COMFYUI_ALIAS}='source $VENV_PATH/bin/activate && cd $COMFYUI_DIR && python main.py $COMFYUI_LAUNCH_ARGS'"
-            fi
+            echo "$alias_comment"
+            echo "$alias_definition"
         } >> "$config_file"
         echo "  ✓ Added alias '${COMFYUI_ALIAS}' to $config_name"
         added=1
@@ -2212,10 +2225,18 @@ add_bash_aliases() {
     fi
 }
 
-# Function to add Fish shell functions (non-destructive, additive only)
+# Function to add or update Fish shell functions.
 add_fish_functions() {
     local config_file="$1"
     local added=0
+    local function_comment frontend_command=""
+
+    if $MANAGE_FRONTEND && $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
+        function_comment="# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
+        frontend_command="    uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
+    else
+        function_comment="# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend not pinned on launch)"
+    fi
 
     # Show existing ComfyUI-related functions for context
     if [ -f "$config_file" ]; then
@@ -2228,28 +2249,56 @@ add_fish_functions() {
         fi
     fi
 
-    # Add launch function if it doesn't already exist
+    # Update an existing selected function, mirroring Bash/Zsh alias behavior.
     if [ -f "$config_file" ] && grep -q "^function ${COMFYUI_ALIAS}\$" "$config_file"; then
-        echo "  ✓ Function '${COMFYUI_ALIAS}' already exists in Fish config — skipping"
-        if ! $MANAGE_FRONTEND || ! $INSTALL_COMFYUI_FRONTEND || ! $PIN_FRONTEND_VERSION_IN_ALIAS; then
-            echo "  ⚠️  Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
+        local temp_config
+        temp_config=$(mktemp "${config_file}.tmp.XXXXXX")
+        if ! awk \
+            -v comment_prefix="# ComfyUI: ${COMFYUI_ALIAS} -> " \
+            -v replacement_comment="$function_comment" \
+            -v function_header="function ${COMFYUI_ALIAS}" \
+            -v activate_command="    source $VENV_PATH/bin/activate.fish" \
+            -v frontend_command="$frontend_command" \
+            -v cd_command="    cd $COMFYUI_DIR" \
+            -v launch_command="    python main.py $COMFYUI_LAUNCH_ARGS \$argv" '
+                index($0, comment_prefix) == 1 { print replacement_comment; next }
+                $0 == function_header {
+                    print function_header
+                    print activate_command
+                    if (frontend_command != "") print frontend_command
+                    print cd_command
+                    print launch_command
+                    print "end"
+                    replacing = 1
+                    depth = 1
+                    next
+                }
+                replacing {
+                    if ($0 ~ /^[[:space:]]*(begin|for|function|if|switch|while)([[:space:]]|$)/) depth++
+                    if ($0 ~ /^[[:space:]]*end([[:space:];]|$)/) {
+                        depth--
+                        if (depth == 0) replacing = 0
+                    }
+                    next
+                }
+                { print }
+                END { if (replacing || depth != 0) exit 1 }
+            ' "$config_file" > "$temp_config"; then
+            rm -f "$temp_config"
+            echo "  ❌ Could not safely update function '${COMFYUI_ALIAS}' in Fish config" >&2
+            return 1
         fi
-        if [ -n "$COMFYUI_LAUNCH_ARGS" ]; then
-            echo "  ⚠️  Existing function may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
-        fi
+        chmod --reference="$config_file" "$temp_config"
+        mv "$temp_config" "$config_file"
+        echo "  ✓ Updated function '${COMFYUI_ALIAS}' in Fish config"
+        added=1
     else
         {
             echo ""
-            if $MANAGE_FRONTEND && $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
-                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend $COMFYUI_FRONTEND_VERSION)"
-            else
-                echo "# ComfyUI: ${COMFYUI_ALIAS} -> $COMFYUI_DIR (frontend not pinned on launch)"
-            fi
+            echo "$function_comment"
             echo "function ${COMFYUI_ALIAS}"
             echo "    source $VENV_PATH/bin/activate.fish"
-            if $MANAGE_FRONTEND && $INSTALL_COMFYUI_FRONTEND && $PIN_FRONTEND_VERSION_IN_ALIAS; then
-                echo "    uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION"
-            fi
+            [ -n "$frontend_command" ] && echo "$frontend_command"
             echo "    cd $COMFYUI_DIR"
             echo "    python main.py $COMFYUI_LAUNCH_ARGS \$argv"
             echo "end"

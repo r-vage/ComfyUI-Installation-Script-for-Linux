@@ -2096,7 +2096,7 @@ call "$VENV_PATH\Scripts\activate.bat"
         Write-Success "envact.bat already exists — skipping"
     }
 
-    # --- Add PowerShell profile functions (non-destructive, additive only) ---
+    # --- Add or update PowerShell profile functions ---
     Write-Host ""
     Write-Step "Configuring PowerShell profile aliases..."
 
@@ -2128,22 +2128,12 @@ call "$VENV_PATH\Scripts\activate.bat"
 
     $added = $false
 
-    # Add launch function if it doesn't already exist
-    if ($profileContent -match "function $COMFYUI_ALIAS\b") {
-        Write-Success "Function '$COMFYUI_ALIAS' already exists in profile - skipping"
-        if ((-not $Manage.Frontend) -or (-not $INSTALL_COMFYUI_FRONTEND) -or (-not $PIN_FRONTEND_VERSION_IN_ALIAS)) {
-            Write-Warn "Existing function may still pin the frontend; remove it and rerun step 11 to regenerate it"
-        }
-        if (-not [string]::IsNullOrWhiteSpace($COMFYUI_LAUNCH_ARGS)) {
-            Write-Warn "Existing function may not include the configured launch arguments; remove it and rerun step 11 to regenerate it"
-        }
+    $frontendFunctionSetup = if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
+        "    & `"$VENV_PATH\Scripts\python.exe`" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION`r`n"
     } else {
-        $frontendFunctionSetup = if ($Manage.Frontend -and $INSTALL_COMFYUI_FRONTEND -and $PIN_FRONTEND_VERSION_IN_ALIAS) {
-            "    & `"$VENV_PATH\Scripts\python.exe`" -m uv pip install -q comfyui-frontend-package==$COMFYUI_FRONTEND_VERSION`r`n"
-        } else {
-            ""
-        }
-        $funcBlock = @"
+        ""
+    }
+    $funcBlock = @"
 
 # ComfyUI: $COMFYUI_ALIAS -> $COMFYUI_DIR
 function $COMFYUI_ALIAS {
@@ -2152,6 +2142,18 @@ $frontendFunctionSetup    & "$VENV_PATH\Scripts\Activate.ps1"
     python main.py $COMFYUI_LAUNCH_ARGS @args
 }
 "@
+
+    # The suggested default remains collision-free. If an existing name is
+    # explicitly selected, retarget that function to this installation.
+    $escapedAlias = [regex]::Escape($COMFYUI_ALIAS)
+    $functionPattern = "(?ms)^(?:# ComfyUI: $escapedAlias ->[^\r\n]*\r?\n)?function\s+$escapedAlias\s*\{.*?^\}"
+    if ([regex]::IsMatch($profileContent, $functionPattern)) {
+        $replacementBlock = $funcBlock.TrimStart([char[]]"`r`n")
+        $profileContent = [regex]::Replace($profileContent, $functionPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $replacementBlock })
+        Set-Content $profilePath $profileContent -Encoding UTF8 -NoNewline
+        Write-Success "Updated function '$COMFYUI_ALIAS' in profile"
+        $added = $true
+    } else {
         Add-Content $profilePath $funcBlock -Encoding UTF8
         Write-Success "Added function '$COMFYUI_ALIAS' to profile"
         $added = $true

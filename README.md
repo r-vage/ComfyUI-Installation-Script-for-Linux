@@ -16,7 +16,7 @@ Automated installation scripts for ComfyUI on **Linux** and **Windows** systems 
 - **Smart Dependency Management**: Prevents version conflicts by enforcing package versions
 - **Per-Directory Sharing**: Independently centralize models, input, output, user data, and custom_nodes
 - **Multi-Install Support**: Run multiple ComfyUI versions side-by-side with per-version aliases and launchers
-- **Shell Integration**: Adds user-chosen aliases (e.g., `comfy2`, `comfy3`) with non-destructive, additive handling
+- **Shell Integration**: Adds user-chosen aliases (e.g., `comfy2`, `comfy3`) and retargets a selected name when it already exists
 - **Automatic Alias Naming**: Leaving the alias prompt empty selects `comfy`, then `comfy1`, `comfy2`, and so on
 - **Multiple Shell Support**: Auto-detects and configures bash, zsh, and fish shells
 - **Launch Arguments**: Append configurable flags to every generated alias and launcher
@@ -180,7 +180,7 @@ Mode [E]:
   Launch alias [comfy]:
 ```
 
-The folder name is derived automatically: `0.28.0` becomes `ComfyUI_0.28.0`. An empty alias prompt checks existing profiles and launcher files, then suggests the first free name in `comfy`, `comfy1`, `comfy2`, and so on.
+The folder name is derived automatically: `0.28.0` becomes `ComfyUI_0.28.0`. An empty alias prompt checks existing profiles and launcher files, then suggests the first free name in `comfy`, `comfy1`, `comfy2`, and so on. Entering an existing launcher name explicitly updates that alias or profile function to point to the selected ComfyUI installation.
 
 Advanced hardware selection accepts NVIDIA, AMD/ROCm, CPU, or `-` on both platforms. NVIDIA accepts CUDA aliases such as `13`, `13.0`, and `cu130`. Linux AMD accepts configured ROCm aliases such as `7.1` and `rocm7.1`; Windows AMD accepts `7.2`, `7.2.1`, and `rocm7.2.1`. PyTorch shorthand such as `2.9` is normalized to the newest configured patch (`2.9.1`). The platform, Python, PyTorch, and backend combination is validated before any selected work starts.
 
